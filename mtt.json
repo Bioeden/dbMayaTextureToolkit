@@ -1,0 +1,26 @@
+{
+    "supported_nodes":[
+        {
+            "node_type":"file",
+            "node_nicename":"FILE",
+            "node_attr":"fileTextureName"
+        },
+        {
+            "node_type":"psdFileTex",
+            "node_nicename":"PSD",
+            "node_attr":"fileTextureName"
+        },
+        {
+            "node_type":"mentalrayTexture",
+            "node_nicename":"MRT",
+            "node_attr":"fileTextureName"
+        }
+    ],
+    "workspace_extend":{
+        "texture_source_folder":"<WORKSPACE>/PSD/"
+    },
+    "custom_buttons":[
+
+    ],
+    "import_policy":"from dbMayaTextureToolkit.mttImportPolicy import exec_import_policy"
+}

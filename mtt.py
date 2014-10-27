@@ -36,7 +36,6 @@ def show_ui(toggle=True):
     """ INIT TOOL AND SHOW UI
 
     @param toggle: destroy and recreate window when is set to False
-    @param reloadModules: force reload of all modules
     """
     # delete UI if exists
     if cmds.control(WINDOW_NAME, exists=True):

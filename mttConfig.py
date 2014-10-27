@@ -230,7 +230,8 @@ def __get_JSON_settings():
     },
     "custom_buttons":[
     ],
-    "import_policy":"from dbMayaTextureToolkit.mttImportPolicy import exec_import_policy"
+    "import_policy":"from dbMayaTextureToolkit.mttImportPolicy import exec_import_policy",
+    "path_pattern":"E:\\CG_Projects\\Demo_MTT"
 }'''
         f = open(json_file_path, 'w')
         f.write(default_file_content)
@@ -263,12 +264,18 @@ def __get_JSON_settings():
 
         import_policy = json_settings['import_policy']
 
+        if 'path_pattern' in json_settings:
+            # convert string to raw string
+            path_pattern = ('%r' % json_settings['path_pattern'])[2:-1]
+        else:
+            path_pattern = '.*'
+
     except ValueError, e:
         db_output('Error when loading JSON file :\n%s' % e)
 
-    return supported_type, unsupported_type, texture_source_folder, custom_buttons, import_policy
+    return supported_type, unsupported_type, texture_source_folder, custom_buttons, import_policy, path_pattern
 
 
 MAYA_MAIN_WINDOW = __get_maya_window()
 SETTINGS = __get_settings()
-SUPPORTED_TYPE, UNSUPPORTED_TYPE, TEXTURE_SOURCE_FOLDER, CUSTOM_BUTTONS, IMPORT_POLICY = __get_JSON_settings()
+SUPPORTED_TYPE, UNSUPPORTED_TYPE, TEXTURE_SOURCE_FOLDER, CUSTOM_BUTTONS, IMPORT_POLICY, PATH_PATTERN = __get_JSON_settings()

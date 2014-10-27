@@ -1,6 +1,7 @@
 """ Maya Texture Toolkit
 
 Maya Texture Toolkit aims to help artist to manage and work easily with textures in Maya
+https://github.com/Bioeden/dbMayaTextureToolkit
 
 
 Launch command
@@ -60,7 +61,9 @@ Default JSON content
             "tooltip":"User Button Example",
             "cmd":"cmds.TextureViewWindow"
         }
-    ]
+    ],
+    "import_policy":"from dbMayaTextureToolkit.mttImportPolicy import exec_import_policy",
+    "path_pattern":"E:\\CG_Projects\\Demo_MTT"
 }
 
 """
@@ -69,7 +72,7 @@ Default JSON content
 # AUTHOR = 'David Bole aka Bioeden'
 
 __author__ = u'David Bole aka Bioeden'
-__version__ = 1.00
+__version__ = 1.01
 
 import maya.cmds as cmds
 if cmds.optionVar(query='MTT_version') < __version__:

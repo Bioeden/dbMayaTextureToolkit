@@ -102,6 +102,7 @@ class MTTView(QMainWindow):
         self.viewer_btn = None
         self.visibility_grp = None
         self.wrong_name_visibility_btn = None
+        self.wrong_path_visibility_btn = None
         self.basename_visibility_btn = None
         self.namespace_visibility_btn = None
         self.filter_instances_btn = None
@@ -186,7 +187,7 @@ class MTTView(QMainWindow):
         # apply theme
         self.on_choose_theme(self.settings.value('theme', 'Default'))
 
-    #---------------------------------------------------------------------------------------------------------------------
+    #-------------------------------------------------------------------------------------------------------------------
     # UI CREATION
     def __create_ui(self):
         """ Create main UI """
@@ -281,6 +282,12 @@ class MTTView(QMainWindow):
             self.on_toolbar_wrong_name_visibility,
             True)
 
+        self.wrong_path_visibility_btn = self.__create_toolbar_button(
+            ':/tb_vizWrongPath',
+            'Highlight Texture path clashing with user defined path pattern',
+            self.on_toolbar_wrong_path_visibility,
+            True)
+
         self.basename_visibility_btn = self.__create_toolbar_button(
             ':/tb_vizBasename',
             'Show files texture name only',
@@ -294,12 +301,14 @@ class MTTView(QMainWindow):
             True)
 
         self.wrong_name_visibility_btn.setChecked(get_settings_bool_value(self.settings.value('vizWrongNameState', DEFAULT_VIZ_WRONG_NAME)))
+        self.wrong_path_visibility_btn.setChecked(get_settings_bool_value(self.settings.value('vizWrongPathState', DEFAULT_VIZ_WRONG_NAME)))
         self.basename_visibility_btn.setChecked(get_settings_bool_value(self.settings.value('showBasenameState', DEFAULT_SHOW_BASENAME)))
         self.namespace_visibility_btn.setChecked(not get_settings_bool_value(self.settings.value('showNamespaceState', DEFAULT_SHOW_NAMESPACE)))
 
-        self.visibility_grp.add_button(self.wrong_name_visibility_btn)
-        self.visibility_grp.add_button(self.basename_visibility_btn)
         self.visibility_grp.add_button(self.namespace_visibility_btn)
+        self.visibility_grp.add_button(self.wrong_name_visibility_btn)
+        self.visibility_grp.add_button(self.wrong_path_visibility_btn)
+        self.visibility_grp.add_button(self.basename_visibility_btn)
 
         self.visibility_grp.set_current_state(self.settings.value('visibilityGroup', 1))
         toolbar_layout.addWidget(self.visibility_grp)
@@ -420,8 +429,8 @@ class MTTView(QMainWindow):
         toolbar_layout.addStretch(2)
         self.stat_info = QLabel()
         self.stat_info.setAlignment(Qt.AlignCenter | Qt.AlignRight)
-        self.stat_info.setText('0 File | 0 Node')
-        self.stat_info.setToolTip('Files count | Nodes count')
+        self.stat_info.setText('0 File | 0/0 Node')
+        self.stat_info.setToolTip('number of files | number of nodes shown / total number of nodes')
         toolbar_layout.addWidget(self.stat_info)
 
         self.info_btn = self.__create_toolbar_button(
@@ -721,22 +730,21 @@ class MTTView(QMainWindow):
 
     def __update_node_file_count_ui(self):
         file_count = self.model.get_file_count()
-        file_str = 'file'
-        if file_count > 1:
-            file_str = 'files'
+        file_str = 'file' if file_count < 1 else 'files'
+
+        node_shown_count = self.proxy.rowCount()
 
         node_count = self.model.get_node_count()
-        node_str = 'node'
-        if node_count > 1:
-            node_str = 'nodes'
+        node_str = 'node' if node_count < 1 else 'nodes'
 
-        self.stat_info.setText('%s %s | %s %s' % (file_count, file_str, node_count, node_str))
+        self.stat_info.setText('%d %s | %d/%d %s' % (file_count, file_str, node_shown_count, node_count, node_str))
 
-    #---------------------------------------------------------------------------------------------------------------------
+    #-------------------------------------------------------------------------------------------------------------------
     # UI LOGIC
     def __layout_changed(self):
         cmds.optionVar(stringValue=('filtered_instances', ''))
         self.model.emit(SIGNAL("layoutChanged()"))
+        self.__update_node_file_count_ui()
 
     @Slot()
     def on_toolbar_show_only_selection(self):
@@ -780,6 +788,13 @@ class MTTView(QMainWindow):
         """ Highlight node with the same name as texture """
         self.model.emit(SIGNAL("layoutAboutToBeChanged()"))
         self.settings.setValue('vizWrongNameState', self.wrong_name_visibility_btn.isChecked())
+        self.__layout_changed()
+
+    @Slot()
+    def on_toolbar_wrong_path_visibility(self):
+        """ Highlight Texture path clashing with user defined path pattern """
+        self.model.emit(SIGNAL("layoutAboutToBeChanged()"))
+        self.settings.setValue('vizWrongPathState', self.wrong_path_visibility_btn.isChecked())
         self.__layout_changed()
 
     @Slot()
@@ -912,6 +927,7 @@ class MTTView(QMainWindow):
         else:
             search = QRegExp(text, Qt.CaseInsensitive, QRegExp.Wildcard)
         self.proxy.setFilterRegExp(search)
+        self.__update_node_file_count_ui()
 
     @Slot()
     def on_filter_manage_quick_filter(self):
@@ -1798,7 +1814,7 @@ class MTTView(QMainWindow):
             '</p>' % (__version__, __author__, '<br/>'.join([u'<i>\xa0\xa0%s %s</i>' % (name.partition(' ')[2], name.partition(' ')[0]) for name in sorted(special_list)]))
         )
 
-    #---------------------------------------------------------------------------------------------------------------------
+    #-------------------------------------------------------------------------------------------------------------------
     # TOOLS METHODS
     def __output_message(self, message, msg_type=None, verbose=False):
         db_output(message, msg_type=msg_type)
@@ -2211,6 +2227,7 @@ class MTTView(QMainWindow):
 
                 self.proxy.selected_texture_nodes = set(nodes)
                 self.model.request_sort()
+                self.__update_node_file_count_ui()
                 return
             else:
                 self.proxy.selected_texture_nodes = None
@@ -2219,6 +2236,8 @@ class MTTView(QMainWindow):
         else:
             self.proxy.selected_texture_nodes = None
             self.model.request_sort()
+
+        self.__update_node_file_count_ui()
 
     def reset_mtt(self, clientData=None):
         cmds.optionVar(stringValue=('filtered_instances', ''))
@@ -2235,7 +2254,7 @@ class MTTView(QMainWindow):
     def fake_def(self):
         pass
 
-    #---------------------------------------------------------------------------------------------------------------------
+    #-------------------------------------------------------------------------------------------------------------------
     # MANAGE CALLBACKS
     def apply_attribute_change_callback(self):
         nodes = self.model.get_all_nodes_name()
@@ -2270,6 +2289,7 @@ class MTTView(QMainWindow):
                 self.selection_callback_id = 0
                 self.proxy.selected_texture_nodes = None
                 self.model.request_sort()
+        self.__update_node_file_count_ui()
 
     def __create_callbacks(self):
         """ Create callbacks """
@@ -2316,7 +2336,7 @@ class MTTView(QMainWindow):
     def __remove_filewatch(self):
         self.model.filewatch_remove_all()
 
-    #---------------------------------------------------------------------------------------------------------------------
+    #-------------------------------------------------------------------------------------------------------------------
     # CLEAN EXIT
     def __save_dock_settings(self):
         if not self.viewer_dock:

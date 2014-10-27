@@ -25,7 +25,7 @@ class MTTDelegate(QStyledItemDelegate):
         # if index.row() % 2 == 0
 
         if index.column() == NODE_REFERENCE:
-            # NODE_REFERENCE -------------------------------------------------------------------------------------------------
+            # NODE_REFERENCE ------------------------------------------------------------------------------------------
 
             # backup painter
             painter.save()
@@ -62,7 +62,7 @@ class MTTDelegate(QStyledItemDelegate):
             # restore painter
             painter.restore()
         elif index.column() == FILE_STATE:
-            # FILE_STATE -----------------------------------------------------------------------------------------------------
+            # FILE_STATE ----------------------------------------------------------------------------------------------
 
             # backup painter
             painter.save()
@@ -93,7 +93,7 @@ class MTTDelegate(QStyledItemDelegate):
             # restore painter
             painter.restore()
         elif index.column() == NODE_NAME:
-            # NODE_NAME ------------------------------------------------------------------------------------------------------
+            # NODE_NAME -----------------------------------------------------------------------------------------------
             text = index.model().data(index, Qt.DisplayRole)
             palette = QApplication.palette()
             bg_color = (palette.highlight().color() if option.state & QStyle.State_Selected else Qt.transparent)
@@ -112,19 +112,26 @@ class MTTDelegate(QStyledItemDelegate):
             painter.save()
             painter.fillRect(option.rect, bg_color)
             painter.setPen(txt_color)
-            QApplication.style().drawItemText(painter, option.rect, Qt.AlignLeft | Qt.AlignVCenter, palette, True, text)
+            rect = option.rect
+            rect.translate(4, 0)
+            QApplication.style().drawItemText(painter, rect, Qt.AlignLeft | Qt.AlignVCenter, palette, True, text)
             painter.restore()
         elif index.column() == NODE_FILE:
-            # NODE_FILE ------------------------------------------------------------------------------------------------------
+            # NODE_FILE -----------------------------------------------------------------------------------------------
+            palette = QApplication.palette()
+            bg_color = (palette.highlight().color() if option.state & QStyle.State_Selected else Qt.transparent)
+            txt_color = (palette.highlightedText().color() if option.state & QStyle.State_Selected else palette.text().color())
+
             text = index.model().data(index, Qt.DisplayRole)
+            if get_settings_bool_value(self.settings.value('vizWrongPathState', DEFAULT_VIZ_WRONG_NAME)):
+                if not re.match(PATH_PATTERN, text):
+                    bg_color = QBrush((Qt.red if option.state & QStyle.State_Selected else Qt.darkRed), Qt.Dense4Pattern)
+
             if get_settings_bool_value(self.settings.value('showBasenameState', DEFAULT_SHOW_BASENAME)):
                 text = os.path.basename(text)
             elif not get_settings_bool_value(self.settings.value('showRealAttributeValue', DEFAULT_SHOW_REAL_ATTRIBUTE)):
                 if not text.startswith('\\'):
                     text = os.path.normpath(workspace(projectPath=text))
-            palette = QApplication.palette()
-            bg_color = (palette.highlight().color() if option.state & QStyle.State_Selected else Qt.transparent)
-            txt_color = (palette.highlightedText().color() if option.state & QStyle.State_Selected else palette.text().color())
 
             painter.save()
             painter.fillRect(option.rect, bg_color)

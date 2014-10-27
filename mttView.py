@@ -2095,9 +2095,10 @@ class MTTView(QMainWindow):
                 or not old_name \
                 or self.settings.value('suspendRenameCallbacks', False):
             return
-        new_node_name = om.MFnDependencyNode(node).name()
-        if new_node_name != old_name:
-            if cmds.nodeType(new_node_name) in self.supported_format_dict.iterkeys():
+        new_node = om.MFnDependencyNode(node)
+        if new_node.typeName() in self.supported_format_dict.iterkeys():
+            new_node_name = new_node.name()
+            if new_node_name != old_name:
                 self.model.rename_database_node(old_name, new_node_name)
                 if self.proxy.selected_texture_nodes is not None:
                     self.proxy.selected_texture_nodes.remove(old_name)

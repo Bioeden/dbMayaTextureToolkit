@@ -1350,17 +1350,32 @@ class MTTView(QMainWindow):
             psd_files = list()
             missing_files = list()
             for node in nodes:
+                psd_found = False
+
+                # get file path and filename
                 node_name = node.data()
                 absolute_path = self.model.get_node_file_fullpath(node_name)
                 filename = os.path.basename(absolute_path)
-                if filename != '.':
-                    file_without_ext = os.path.splitext(filename)[0]
 
-                    psd_file = os.path.join(source_folder, file_without_ext + '.psd')
-                    if not os.path.isfile(psd_file):
-                        psd_file = os.path.join(source_folder, file_without_ext.rsplit('_', 1)[0] + '.psd')
-                    if os.path.isfile(psd_file):
+                if filename != '.':
+                    # split filename with underscore
+                    file_without_ext = os.path.splitext(filename)[0]
+                    file_token = file_without_ext.split('_')
+                    file_token_len = len(file_token)
+
+                    for n in xrange(file_token_len):
+                        # remove token one by one starting at the end of the string
+                        split_num = file_token_len - n
+                        file_without_ext = '_'.join(file_token[:split_num])
+                        psd_file = os.path.join(source_folder, file_without_ext + '.psd')
+
+                        # if file doesn't exists try without another token
+                        if not os.path.isfile(psd_file):
+                            continue
+
+                        # continue if psd file wasn't already opened
                         if psd_file not in psd_files:
+                            psd_found = True
                             psd_files.append(psd_file)
                             if os.access(psd_file, os.W_OK):
                                 cmds.launchImageEditor(editImageFile=psd_file)
@@ -1372,9 +1387,11 @@ class MTTView(QMainWindow):
                                 else:
                                     self.__output_message('Opening Aborted for "%s"' % psd_file, verbose=True)
 
-                        continue
+                            # stop iterating tokens
+                            break
 
-                if absolute_path not in missing_files:
+                # if no psd file found, warn user
+                if not psd_found and absolute_path not in missing_files:
                     missing_files.append(absolute_path)
                     self.__output_message('No PSD found for "%s"' % filename, verbose=True, msg_type='warning')
         else:

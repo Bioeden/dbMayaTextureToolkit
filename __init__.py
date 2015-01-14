@@ -72,7 +72,7 @@ Default JSON content
 # AUTHOR = 'David Bole aka Bioeden'
 
 __author__ = u'David Bole aka Bioeden'
-__version__ = 1.01
+__version__ = 1.02
 
 import maya.cmds as cmds
 if cmds.optionVar(query='MTT_version') < __version__:

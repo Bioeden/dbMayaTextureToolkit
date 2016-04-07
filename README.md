@@ -12,7 +12,7 @@ Features
 ========
 
  * clean and compact UI
- * different filters (filter from selection, search field, quick fitlers...)
+ * different filters (filter from selection, search field, quick filters...)
  * autoreload, autorename
  * internal viewer
  * node creation from selected files

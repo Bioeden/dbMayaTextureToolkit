@@ -3,14 +3,13 @@ from PySide.QtGui import *
 from PySide.QtCore import *
 
 # custom import
-from mttConfig import *
+from mttCmdUi import get_maya_window
+from mttConfig import MTTSettings, WINDOW_TITLE, WINDOW_ICON
 
 
 class MTTQuickFilterManager(QDialog):
-    def __init__(self, parent=MAYA_MAIN_WINDOW, settings=SETTINGS):
+    def __init__(self, parent=get_maya_window()):
         super(MTTQuickFilterManager, self).__init__(parent)
-
-        self.settings = settings
 
         # create UI
         main_layout = QVBoxLayout(self)
@@ -18,11 +17,11 @@ class MTTQuickFilterManager(QDialog):
         main_layout.setContentsMargins(4, 4, 4, 4)
 
         list_layout = QHBoxLayout(self)
-        self.quick_filter_wildcard_ui = _QuickFilterUI('Wilcard')
+        self.quick_filter_wildcard_ui = _QuickFilterUI('Wildcard')
         list_layout.addLayout(self.quick_filter_wildcard_ui)
 
-        self.quick_filter_regularexpression_ui = _QuickFilterUI('RegularExpression')
-        list_layout.addLayout(self.quick_filter_regularexpression_ui)
+        self.quick_filter_regex_ui = _QuickFilterUI('RegularExpression')
+        list_layout.addLayout(self.quick_filter_regex_ui)
 
         main_layout.addLayout(list_layout)
 
@@ -40,23 +39,26 @@ class MTTQuickFilterManager(QDialog):
         main_layout.addLayout(buttons_layout)
 
         # populate lists
-        itemsStr = self.settings.value('filterQuickWordsWildcard', '')
-        if itemsStr:
-            self.quick_filter_wildcard_ui.populate(quick_filter_words=itemsStr.split(';;'))
+        items_str = MTTSettings.value('filterQuickWordsWildcard')
+        if items_str:
+            self.quick_filter_wildcard_ui.populate(
+                quick_filter_words=items_str.split(';;'))
 
-        itemsStr = self.settings.value('filterQuickWordsRegExp', '')
-        if itemsStr:
-            self.quick_filter_regularexpression_ui.populate(quick_filter_words=itemsStr.split(';;'))
+        items_str = MTTSettings.value('filterQuickWordsRegExp')
+        if items_str:
+            self.quick_filter_regex_ui.populate(
+                quick_filter_words=items_str.split(';;'))
 
         # adjust UI
         self.setWindowTitle(WINDOW_TITLE)
+        self.setWindowIcon(QIcon(WINDOW_ICON))
         self.setModal(True)
         self.resize(300, 200)
 
     def get_lists(self):
         return (
-            self.quick_filter_wildcard_ui.getListContent(),
-            self.quick_filter_regularexpression_ui.getListContent())
+            self.quick_filter_wildcard_ui.get_list_content(),
+            self.quick_filter_regex_ui.get_list_content())
 
 
 class _QuickFilterUI(QVBoxLayout):
@@ -96,10 +98,10 @@ class _QuickFilterUI(QVBoxLayout):
 
         self.addLayout(buttons_layout)
 
-    def addItem(self, itemName=''):
-        if not itemName:
-            itemName = 'new item'
-        item = QStandardItem(itemName)
+    def addItem(self, item_name=''):
+        if not item_name:
+            item_name = 'new item'
+        item = QStandardItem(item_name)
         item.setDropEnabled(False)
         self.quick_filter_model.appendRow(item)
 
@@ -108,11 +110,11 @@ class _QuickFilterUI(QVBoxLayout):
         if sel:
             self.quick_filter_model.removeRow(sel[0].row())
 
-    def populate(self, quick_filter_words=[]):
-        for word in quick_filter_words:
-            self.addItem(itemName=word)
+    def populate(self, quick_filter_words=None):
+        for word in quick_filter_words or []:
+            self.addItem(item_name=word)
 
-    def getListContent(self):
+    def get_list_content(self):
         row_count = self.quick_filter_model.rowCount()
         items = []
         for idx in range(row_count):

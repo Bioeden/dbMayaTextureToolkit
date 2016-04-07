@@ -1,21 +1,28 @@
-import maya.cmds as cmds
+from maya import cmds
 
 
-def exec_import_policy(current_selection, node_name, file_name):
-    """ Import policy example """
+def exec_import_policy(selection, node_name, file_name):
+    """ Import policy example
 
-    if file_name.split('.')[0].endswith('_DIF'):
-        for obj in current_selection:
+    :param selection: (list) of selected objects
+    :param node_name: (string) created shading node
+    :param file_name: (string) texture file name
+    """
+
+    file_name = file_name.split('.')[0]
+
+    if file_name.endswith('_DIF'):
+        for obj in selection:
             if cmds.attributeQuery('color', node=obj, exists=True):
                 cmds.connectAttr('%s.outColor' % node_name, '%s.color' % obj)
 
-    elif file_name.split('.')[0].endswith('_SPE'):
-        for obj in current_selection:
+    elif file_name.endswith('_SPE'):
+        for obj in selection:
             if cmds.attributeQuery('specularColor', node=obj, exists=True):
                 cmds.connectAttr('%s.outColor' % node_name, '%s.specularColor' % obj)
 
-    elif file_name.split('.')[0].endswith('_NOR'):
-        for obj in current_selection:
+    elif file_name.endswith('_NOR'):
+        for obj in selection:
             if cmds.attributeQuery('normalCamera', node=obj, exists=True):
                 # create bump node
                 current_bump_node = cmds.shadingNode('bump2d', name='%s_bump' % node_name, asUtility=True)

@@ -1,43 +1,42 @@
-# Maya import
-import maya.OpenMaya as om
-import maya.mel as mel
-import maya.cmds as cmds
-import __main__
-
-# Qt import
-from PySide.QtGui import *
-from PySide.QtCore import *
-
 # Python import
 from functools import partial
 from time import time
+import os
 import stat
-import webbrowser
-
-# custom import
+# PySide import
+from PySide.QtGui import *
+from PySide.QtCore import (
+    Qt, QSize, QRegExp, QPoint, QRect, QModelIndex, QFileSystemWatcher)
+# Maya import
+import __main__
+from maya import mel, cmds, OpenMaya as om
+from maya.OpenMaya import MSceneMessage as sceneMsg
+# Custom import
 import mttResources
-from mttConfig import *
-from mttQuickFilterManager import MTTQuickFilterManager
-from mttCustomWidget import RightPushButton, StatusToolbarButton, StatusCollapsibleLayout, MessageBoxWithCheckbox
+import mttViewer
 import mttModel
 import mttDelegate
 import mttProxy
-import mttViewer
-import mttFilterFileDialog
-import mttOverridePanels
-
-
-def waitingcursor(func):
-    def wrapper(self, *args, **kwargs):
-        QApplication.setOverrideCursor(QCursor(Qt.WaitCursor))
-        if args and kwargs:
-            func(self, *args, **kwargs)
-        elif kwargs:
-            func(self, *kwargs)
-        else:
-            func(self)
-        QApplication.restoreOverrideCursor()
-    return wrapper
+import mttCmdUi
+from mttConfig import (
+    MTTSettings,
+    WINDOW_NAME, WINDOW_TITLE, WINDOW_ICON, VIEWER_TITLE, VIEWER_DOCK_NAME,
+    DEFAULT_VALUES, VIEW_COLUMN_SIZE, VIEW_COLUMN_CONTEXT,
+    TAG, NODE_NAME, NODE_FILE, COLUMN_COUNT, PROMPT_INSTANCE_SESSION, THEMES,
+    PROMPT_INSTANCE_WAIT_DURATION, PROMPT_INSTANCE_STATE, PROMPT_INSTANCE_ALWAYS,
+    PROMPT_INSTANCE_WAIT
+)
+from mttCmd import (
+    convert_to_relative_path, get_source_file,
+    check_editor_preferences, mtt_log
+)
+from mttCmdUi import get_maya_window
+from mttCustomWidget import RightPushButton, MessageBoxWithCheckbox
+from mttDecorators import wait_cursor
+from mttSettingsMenu import MTTSettingsMenu
+from mttViewStatusLine import MTTStatusLine
+# avoid inspection error
+from mttSourceControlTemplate import checkout, submit, revert
 
 
 class MTTDockFrame(QFrame):
@@ -52,26 +51,27 @@ class MTTDockFrame(QFrame):
 
 
 class MTTDockWidget(QDockWidget):
-    def __init__(self, settings, *args, **kwargs):
-        super(MTTDockWidget, self).__init__(*args, **kwargs)
+    def __init__(self, title):
+        super(MTTDockWidget, self).__init__()
 
-        self.settings = settings
+        self.setWindowTitle(title)
 
-    def closeEvent(self, *args, **kwargs):
-        self.settings.setValue('viewerState', False)
-        self.settings.setValue('Viewer/windowGeometry', self.saveGeometry())
-        super(MTTDockWidget, self).closeEvent(*args, **kwargs)
+    def closeEvent(self, event):
+        MTTSettings.set_value('viewerState', False)
+        MTTSettings.set_value('Viewer/windowGeometry', self.saveGeometry())
+        super(MTTDockWidget, self).closeEvent(event)
 
 
-#---------------------------------------------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 # MAIN WINDOW
-#---------------------------------------------------------------------------------------------------------------------
-#noinspection PyUnresolvedReferences
+# ------------------------------------------------------------------------------
 class MTTView(QMainWindow):
     """ Maya Texture Manager Main UI """
 
-    def __init__(self, parent=None, settings=SETTINGS):
+    def __init__(self, parent=None):
         super(MTTView, self).__init__(parent)
+
+        mttResources.qInitResources()
 
         self.setObjectName(WINDOW_NAME)
         self.setWindowTitle(WINDOW_TITLE)
@@ -79,7 +79,7 @@ class MTTView(QMainWindow):
         # Callbacks variables
         self.is_callbacks_created = False
         self.is_batching_change_attr = False
-        self.scene_callbacks_ids = list()
+        self.scene_callbacks_ids = []
         self.selection_callback_id = 0
         self.new_callback_id = 0
         self.open_callback_id = 0
@@ -89,29 +89,10 @@ class MTTView(QMainWindow):
         self.attribute_callback_id = dict()
 
         # UI variables
-        self.is_master_cmd = False
         self.viewer_dock = None
-        self.image_editor_name = self.__get_image_editor_name
+        self.viewer_view = None
+        self.image_editor_name = self.__get_image_editor_name()
         self.header_menu = None
-        self.filter_grp = None
-        self.selection_btn = None
-        self.writable_btn = None
-        self.reference_btn = None
-        self.pin_btn = None
-        self.wrong_name_btn = None
-        self.viewer_btn = None
-        self.visibility_grp = None
-        self.wrong_name_visibility_btn = None
-        self.wrong_path_visibility_btn = None
-        self.basename_visibility_btn = None
-        self.namespace_visibility_btn = None
-        self.filter_instances_btn = None
-        self.folder_grp = None
-        self.auto_grp = None
-        self.tool_grp = None
-        self.maya_grp = None
-        self.custom_grp = None
-        self.info_btn = None
         self.filter_reset_btn = None
         self.filter_line_edit = None
         self.filter_re_btn = None
@@ -121,73 +102,42 @@ class MTTView(QMainWindow):
         self.quick_action_layout = None
         self.quick_reload_btn = None
         self.quick_edit_btn = None
-        self.instance_menu = None
-        self.debug_menu = None
-        self.support_info = None
-        self.stat_info = None
-        # theme found at http://www.colourlovers.com/ exclude Flashy Theme
-        self.theme_data = {
-            'Maya Theme': [None, None, None, None, None],
-            'Flashy': ['#FF4F1E', '#F67C31', '#F7A128', '#F7DC2B', '#D1CE05'],
-            'Dusty Velvet': ['#554D7D', '#9078A8', '#C0C0F0', '#9090C0', '#606090'],
-            'Dark Spring Parakeet': ['#171717', '#292929', '#093E47', '#194D0A', '#615400'],
-            'Yellow Tree Frog': ['#E73F3F', '#F76C27', '#E7E737', '#6D9DD1', '#7E45D3'],
-            'Mod Mod Mod Mod': ['#949494', '#3A3A3A', '#3E5C5F', '#125358', '#002D31'],
-            'Blue Jay Feather': ['#1F1F20', '#2B4C7E', '#567EBB', '#606D80', '#DCE0E6'],
-            'Wonderous': ['#BE2525', '#BE5025', '#BE6825', '#BE8725', '#BEA025'],
-            'Rococo Girl': ['#CCB24C', '#F7D683', '#FFFDC0', '#FFFFFD', '#457D97'],
-            '6 Inch Heels': ['#1A2B2B', '#332222', '#4D1A1A', '#661111', '#800909'],
-            '2 Kool For Skool': ['#020304', '#541F14', '#938172', '#CC9E61', '#626266'],
-            'Retro Bath': ['#D8D6AF', '#C3B787', '#AB925C', '#DA902D', '#983727']
-        }
         self.dock_side_data = dict()
         self.dock_side_data['Left'] = Qt.LeftDockWidgetArea
         self.dock_side_data['Top'] = Qt.TopDockWidgetArea
         self.dock_side_data['Right'] = Qt.RightDockWidgetArea
         self.dock_side_data['Bottom'] = Qt.BottomDockWidgetArea
+        self.supported_format_dict = dict(
+            [(nodeType, nodeAttrName)
+             for nodeType, nice, nodeAttrName in MTTSettings.SUPPORTED_TYPE])
 
-        # Tools
-        self.settings = settings
-        self.settings.remove('suspendCallbacks')  # clean old pref
-        cmds.optionVar(intValue=('suspendCallbacks', DEFAULT_SUSPEND_CALLBACK))
+        # clean old pref
+        suspend_callback_value = DEFAULT_VALUES['suspendCallbacks']
+        MTTSettings.remove('suspendCallbacks')
+        cmds.optionVar(intValue=('suspendCallbacks', suspend_callback_value))
         cmds.optionVar(stringValue=('filtered_instances', ''))
-        self.filewatcher = QFileSystemWatcher()
-        self.model = mttModel.MTTModel(settings=settings, watcher=self.filewatcher)
-        self.delegate = mttDelegate.MTTDelegate(settings=settings)
-        self.proxy = mttProxy.MTTProxy(settings=settings)
-        self.completion_model = QStringListModel(self.get_filter_completion_words(), self)
-        self.quick_filter_words_init = get_settings_bool_value(self.settings.value('defaultQuickFilterWords', True))
-        self.quick_filter_words = self.get_filter_quick_words()
-        self.power_user = get_settings_bool_value(self.settings.value('powerUser', DEFAULT_POWER_USER))
-        self.viewer_view = None
 
-        self.supported_format_dict = dict([(nodeType, nodeAttrName) for nodeType, nice, nodeAttrName in SUPPORTED_TYPE])
+        # main UI variables
+        self.file_watcher = QFileSystemWatcher()
+        self.model = mttModel.MTTModel(watcher=self.file_watcher)
+        self.delegate = mttDelegate.MTTDelegate()
+        self.proxy = mttProxy.MTTProxy()
+
+        # user completion
+        self.completion_model = QStringListModel(
+            self.get_filter_completion_words(), self)
+        self.quick_filter_words_init = MTTSettings.value(
+            'defaultQuickFilterWords')
+        self.quick_filter_words = self.get_filter_quick_words()
 
         # create UI
         self.__create_ui()
-
-        # restore geometry
-        window_geo = self.settings.value('windowGeometry')
-        if window_geo:
-            self.restoreGeometry(window_geo)
-        self.centralWidget().setGeometry(self.settings.value('centralGeometry', QRect(0, 0, 400, 200)))
-
-        # manage focus to avoid hotkey capture when tool is called with shortcut key
-        if get_settings_bool_value(self.settings.value('filterFocus', DEFAULT_FILTER_FOCUS)):
-            self.filter_line_edit.setFocus()
-        else:
-            self.setFocus()
+        self.__init_ui()
 
         # create callbacks
         self.__create_callbacks()
 
-        # update node/file count
-        self.__update_node_file_count_ui()
-
-        # apply theme
-        self.on_choose_theme(self.settings.value('theme', 'Default'))
-
-    #-------------------------------------------------------------------------------------------------------------------
+    # -------------------------------------------------------------------------
     # UI CREATION
     def __create_ui(self):
         """ Create main UI """
@@ -195,7 +145,16 @@ class MTTView(QMainWindow):
         main_layout.setSpacing(1)
         main_layout.setContentsMargins(2, 2, 2, 2)
 
-        main_layout.addLayout(self.__create_toolbar_ui())
+        self.settings_menu = MTTSettingsMenu(self)
+
+        self.status_line_ui = MTTStatusLine(
+            self.settings_menu, self.model, self.proxy)
+        self.status_line_ui.viewerToggled.connect(self.on_toggle_viewer)
+        self.status_line_ui.pinModeToggled.connect(self.on_pin_toggle)
+        self.status_line_ui.filterSelectionToggled.connect(
+            self.update_selection_change_callback_state)
+
+        main_layout.addLayout(self.status_line_ui)
         main_layout.addLayout(self.__create_filter_ui())
         main_layout.addWidget(self.__create_table_ui())
         main_layout.addLayout(self.__create_action_ui())
@@ -204,244 +163,36 @@ class MTTView(QMainWindow):
         central.setLayout(main_layout)
         self.setCentralWidget(central)
 
-        if get_settings_bool_value(self.settings.value('viewerState', DEFAULT_VIEWER)):
-            self.on_toolbar_viewer()
+        if MTTSettings.value('viewerState'):
+            self.on_toggle_viewer()
 
-    @staticmethod
-    def __create_toolbar_button(btn_icon, btn_text, btn_cmd, btn_checkable):
-            new_button = StatusToolbarButton(btn_icon)
-            new_button.setToolTip(btn_text)
-            new_button.setStatusTip(btn_text)
-            new_button.clicked.connect(btn_cmd)
-            new_button.setCheckable(btn_checkable)
-            return new_button
-
-    def __create_toolbar_ui(self):
-        """ Create custom toolbar with collapse Maya Status Line behavior """
-
-        toolbar_layout = QHBoxLayout()
-        toolbar_layout.setAlignment(Qt.AlignLeft)
-
-        # FILTER GROUP
-        self.filter_grp = StatusCollapsibleLayout(section_name='Show/Hide the filter icons')
-
-        self.selection_btn = self.__create_toolbar_button(
-            ':/tb_onlySelection',
-            'Show textures applied to current selection',
-            self.on_toolbar_show_only_selection,
-            True)
-        self.writable_btn = self.__create_toolbar_button(
-            ':/tb_onlyWritable',
-            'Hide read-only textures',
-            self.on_toolbar_show_only_writable,
-            True)
-        self.reference_btn = self.__create_toolbar_button(
-            ':/tb_onlyReference',
-            'Hide references',
-            self.on_toolbar_show_reference,
-            True)
-        self.pin_btn = self.__create_toolbar_button(
-            ':/tb_onlyPinned',
-            'Pin textures',
-            self.on_toolbar_pin_nodes,
-            True)
-        self.wrong_name_btn = self.__create_toolbar_button(
-            ':/tb_onlyWrongName',
-            'Show Node name clashing with Texture name',
-            self.on_toolbar_show_wrong_name,
-            True)
-        self.filter_instances_btn = self.__create_toolbar_button(
-            ':/tb_hideInstances',
-            'Show only one instance per file',
-            self.on_toolbar_filter_instances,
-            True)
-
-        self.selection_btn.setChecked(get_settings_bool_value(self.settings.value('onlySelectionState', DEFAULT_ONLY_SELECTION)))
-        self.writable_btn.setChecked(get_settings_bool_value(self.settings.value('onlyWritableState', DEFAULT_ONLY_WRITABLE)))
-        self.reference_btn.setChecked(get_settings_bool_value(self.settings.value('showReferenceState', DEFAULT_SHOW_REFERENCE)))
-        self.wrong_name_btn.setChecked(get_settings_bool_value(self.settings.value('showWrongNameState', DEFAULT_SHOW_WRONG_NAME)))
-        self.filter_instances_btn.setChecked(get_settings_bool_value(self.settings.value('filterInstances', DEFAULT_FILTER_INSTANCES)))
-
-        # sort toolbar buttons
-        self.filter_grp.add_button(self.pin_btn)
-        self.filter_grp.add_button(self.selection_btn)
-        self.filter_grp.add_button(self.reference_btn)
-        self.filter_grp.add_button(self.writable_btn)
-        self.filter_grp.add_button(self.wrong_name_btn)
-        self.filter_grp.add_button(self.filter_instances_btn)
-
-        self.filter_grp.set_current_state(self.settings.value('filterGroup', 1))
-        toolbar_layout.addWidget(self.filter_grp)
-
-        # VISIBILITY GROUP
-        self.visibility_grp = StatusCollapsibleLayout(section_name='Show/Hide the visibility icons')
-
-        self.wrong_name_visibility_btn = self.__create_toolbar_button(
-            ':/tb_vizWrongName',
-            'Highlight Node name clashing with Texture name',
-            self.on_toolbar_wrong_name_visibility,
-            True)
-
-        self.wrong_path_visibility_btn = self.__create_toolbar_button(
-            ':/tb_vizWrongPath',
-            'Highlight Texture path clashing with user defined path pattern',
-            self.on_toolbar_wrong_path_visibility,
-            True)
-
-        self.basename_visibility_btn = self.__create_toolbar_button(
-            ':/tb_vizBasename',
-            'Show files texture name only',
-            self.on_toolbar_basename_visibility,
-            True)
-
-        self.namespace_visibility_btn = self.__create_toolbar_button(
-            ':/tb_vizNamespace',
-            'Toggle namespace visibility',
-            self.on_toolbar_namespace_visibility,
-            True)
-
-        self.wrong_name_visibility_btn.setChecked(get_settings_bool_value(self.settings.value('vizWrongNameState', DEFAULT_VIZ_WRONG_NAME)))
-        self.wrong_path_visibility_btn.setChecked(get_settings_bool_value(self.settings.value('vizWrongPathState', DEFAULT_VIZ_WRONG_NAME)))
-        self.basename_visibility_btn.setChecked(get_settings_bool_value(self.settings.value('showBasenameState', DEFAULT_SHOW_BASENAME)))
-        self.namespace_visibility_btn.setChecked(not get_settings_bool_value(self.settings.value('showNamespaceState', DEFAULT_SHOW_NAMESPACE)))
-
-        self.visibility_grp.add_button(self.namespace_visibility_btn)
-        self.visibility_grp.add_button(self.wrong_name_visibility_btn)
-        self.visibility_grp.add_button(self.wrong_path_visibility_btn)
-        self.visibility_grp.add_button(self.basename_visibility_btn)
-
-        self.visibility_grp.set_current_state(self.settings.value('visibilityGroup', 1))
-        toolbar_layout.addWidget(self.visibility_grp)
-
-        # FOLDER GROUP
-        self.folder_grp = StatusCollapsibleLayout(section_name='Show/Hide the folder icons')
-
-        self.folder_grp.add_button(self.__create_toolbar_button(
-            ':/tb_folderMap',
-            'Open sourceimages folder',
-            self.on_toolbar_open_sourceimages_folder,
-            False)
-        )
-        self.folder_grp.add_button(self.__create_toolbar_button(
-            ':/tb_folderSrc',
-            'Open source folder',
-            self.on_toolbar_open_source_folder,
-            False)
+    def __init_ui(self):
+        # restore geometry
+        self.restoreGeometry(MTTSettings.value('windowGeometry'))
+        self.centralWidget().setGeometry(
+            MTTSettings.value('centralGeometry', QRect(0, 0, 400, 200))
         )
 
-        self.folder_grp.set_current_state(self.settings.value('folderGroup', 1))
-        toolbar_layout.addWidget(self.folder_grp)
+        # restore table header width
+        if not self.table_view.horizontalHeader().restoreState(
+                MTTSettings.value('columnsSize')):
+            # init some UI with default value when no user pref
+            for columnId, sizeValue in VIEW_COLUMN_SIZE.iteritems():
+                self.table_view.setColumnWidth(columnId, sizeValue)
 
-        # AUTO GROUP
-        self.auto_grp = StatusCollapsibleLayout(section_name='Show/Hide the auto actions icons')
+        # manage focus to avoid hotkey capture
+        # when tool is called with shortcut key
+        if MTTSettings.value('filterFocus'):
+            self.filter_line_edit.setFocus()
+        else:
+            self.setFocus()
 
-        auto_reload_btn = self.__create_toolbar_button(
-            ':/tb_toolbar_autoReload',
-            'Auto Reload Textures',
-            self.on_auto_reload,
-            True)
+        # update node/file count
+        self.__update_node_file_count_ui()
 
-        auto_select_btn = self.__create_toolbar_button(
-            ':/tb_toolbar_autoSelect',
-            'Auto Select Textures Node',
-            self.on_auto_select,
-            True)
-
-        auto_rename_btn = self.__create_toolbar_button(
-            ':/tb_toolbar_autoRename',
-            'Auto Rename Textures Node',
-            self.on_auto_rename,
-            True)
-
-        auto_reload_btn.setChecked(get_settings_bool_value(self.settings.value('autoReload', DEFAULT_AUTO_RELOAD)))
-        auto_select_btn.setChecked(get_settings_bool_value(self.settings.value('autoSelect', DEFAULT_AUTO_SELECT)))
-        auto_rename_btn.setChecked(get_settings_bool_value(self.settings.value('autoRename', DEFAULT_AUTO_RENAME)))
-
-        self.auto_grp.add_button(auto_reload_btn)
-        self.auto_grp.add_button(auto_select_btn)
-        self.auto_grp.add_button(auto_rename_btn)
-
-        self.auto_grp.set_current_state(self.settings.value('autoGroup', 1))
-        toolbar_layout.addWidget(self.auto_grp)
-
-        # MTT TOOLS
-        self.tool_grp = StatusCollapsibleLayout(section_name='Show/Hide the tools icons')
-
-        self.viewer_btn = self.__create_toolbar_button(
-            ':/tb_Viewer',
-            'Show/Hide Viewer',
-            self.on_toolbar_viewer,
-            False)
-
-        create_node_btn = self.__create_toolbar_button(
-            ':/tb_toolCreateNode',
-            'Create Node',
-            self.on_toolbar_create_node,
-            False)
-
-        self.viewer_btn.setChecked(get_settings_bool_value(self.settings.value('viewerState', DEFAULT_VIEWER)))
-
-        self.tool_grp.add_button(self.viewer_btn)
-        self.tool_grp.add_button(create_node_btn)
-
-        self.tool_grp.set_current_state(self.settings.value('toolGroup', 1))
-        toolbar_layout.addWidget(self.tool_grp)
-
-        # MAYA TOOLS SHORTCUT
-        self.maya_grp = StatusCollapsibleLayout(section_name='Show/Hide the Maya tools icons')
-
-        self.maya_grp.add_button(self.__create_toolbar_button(
-            ':/tb_Hypershade',
-            'Hypershade',
-            self.on_toolbar_hypershade,
-            False)
-        )
-        self.maya_grp.add_button(self.__create_toolbar_button(
-            ':/tb_NodeEditor',
-            'Node Editor',
-            self.on_toolbar_node_editor,
-            False)
-        )
-        self.maya_grp.add_button(self.__create_toolbar_button(
-            ':/tb_UVEditor',
-            'UV Texture Editor',
-            self.on_toolbar_uv_editor,
-            False)
-        )
-
-        self.maya_grp.set_current_state(self.settings.value('mayaGroup', 1))
-        toolbar_layout.addWidget(self.maya_grp)
-
-        # USER DEFINE GROUP
-        if CUSTOM_BUTTONS:
-            self.custom_grp = StatusCollapsibleLayout(section_name='Show/Hide custom tools')
-            for btnData in CUSTOM_BUTTONS:
-                    self.custom_grp.add_button(self.__create_toolbar_button(
-                        btnData[0],
-                        btnData[1],
-                        eval(btnData[2]),
-                        False)
-                    )
-            toolbar_layout.addWidget(self.custom_grp)
-
-        # SETTINGS MENU
-
-        toolbar_layout.addStretch(2)
-        self.stat_info = QLabel()
-        self.stat_info.setAlignment(Qt.AlignCenter | Qt.AlignRight)
-        self.stat_info.setText('0 File | 0/0 Node')
-        self.stat_info.setToolTip('number of files | number of nodes shown / total number of nodes')
-        toolbar_layout.addWidget(self.stat_info)
-
-        self.info_btn = self.__create_toolbar_button(
-            ':/tb_config',
-            'Settings',
-            self.fake_def,
-            False)
-        self.info_btn.setMenu(self.__create_settings_menu())
-        toolbar_layout.addWidget(self.info_btn)
-
-        return toolbar_layout
+        # apply theme
+        self.on_choose_theme(MTTSettings.value('theme', 'Default'))
+        self.setWindowIcon(QIcon(WINDOW_ICON))
 
     def __create_filter_ui(self):
         """ Create filter widgets """
@@ -456,30 +207,34 @@ class MTTView(QMainWindow):
         self.filter_reset_btn.setFixedSize(24, 24)
         self.filter_reset_btn.setToolTip('Reset filter')
         self.filter_reset_btn.setFlat(True)
-        self.filter_reset_btn.clicked.connect(partial(self.on_filter_set_text, ''))
+        self.filter_reset_btn.clicked.connect(
+            partial(self.on_filter_set_text, ''))
 
         self.filter_line_edit = QLineEdit()
         self.filter_line_edit.setContextMenuPolicy(Qt.CustomContextMenu)
-        self.filter_line_edit.customContextMenuRequested.connect(self.on_filter_quick_filter_menu)
+        self.filter_line_edit.customContextMenuRequested.connect(
+            self.on_filter_quick_filter_menu)
         self.filter_line_edit.textChanged.connect(self.on_filter_text_changed)
-        self.filter_line_edit.editingFinished.connect(self.on_filter_add_completion_item)
+        self.filter_line_edit.editingFinished.connect(
+            self.on_filter_add_completion_item)
 
         completer = QCompleter(self)
         completer.setCaseSensitivity(Qt.CaseInsensitive)
         completer.setModel(self.completion_model)
         self.filter_line_edit.setCompleter(completer)
 
-        self.filter_re_btn = self.__create_toolbar_button(
+        self.filter_re_btn = mttCmdUi.create_status_button(
             ':/fb_regularExpression',
             'Use regular expression',
             self.on_filter_toggle_re,
             True)
-        self.filter_re_btn.setChecked(get_settings_bool_value(self.settings.value('filterRE', DEFAULT_FILTER_RE)))
+        self.filter_re_btn.setChecked(MTTSettings.value('filterRE'))
 
         self.filter_combo = QComboBox()
         self.filter_combo.addItems(['Nodes', 'Files'])
-        self.filter_combo.setCurrentIndex(get_settings_int_value(self.settings.value('filterType', 0)))
-        self.filter_combo.currentIndexChanged.connect(self.on_filter_index_changed)
+        self.filter_combo.setCurrentIndex(MTTSettings.value('filterType'))
+        self.filter_combo.currentIndexChanged.connect(
+            self.on_filter_index_changed)
 
         filter_layout.addWidget(self.filter_reset_btn)
         filter_layout.addWidget(self.filter_line_edit)
@@ -495,12 +250,6 @@ class MTTView(QMainWindow):
         self.table_view.setItemDelegate(self.delegate)
         self.model.set_table_view(self.table_view)
         self.proxy.setSourceModel(self.model)
-        self.table_view.setModel(self.proxy)
-
-        if not self.table_view.horizontalHeader().restoreState(self.settings.value('columnsSize')):
-            # init some UI with default value when no user pref
-            for columnId, sizeValue in VIEW_COLUMN_SIZE.items():
-                self.table_view.setColumnWidth(columnId, sizeValue)
 
         self.table_view.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table_view.setShowGrid(False)
@@ -511,20 +260,25 @@ class MTTView(QMainWindow):
         self.table_view.horizontalHeader().setMinimumSectionSize(10)
         self.table_view.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel)
         self.table_view.setSortingEnabled(True)
-        #self.table_view.setMouseTracking(True)
-        self.table_view_selection_model = self.table_view.selectionModel()
-        self.table_view_selection_model.selectionChanged.connect(self.on_auto_select_node)
 
         # self.proxy.setDynamicSortFilter(True)
-        self.on_filter_index_changed(self.settings.value('filterType', 0))
+        self.on_filter_index_changed(MTTSettings.value('filterType'))
 
         # add context menu to show/hide columns
-        self.table_view.horizontalHeader().setContextMenuPolicy(Qt.CustomContextMenu)
-        self.table_view.horizontalHeader().customContextMenuRequested.connect(self.on_column_header_context_menu)
+        self.table_view.horizontalHeader().setContextMenuPolicy(
+            Qt.CustomContextMenu)
+        self.table_view.horizontalHeader().customContextMenuRequested.connect(
+            self.on_column_header_context_menu)
 
         # add context menu
         self.table_view.setContextMenuPolicy(Qt.CustomContextMenu)
-        self.table_view.customContextMenuRequested.connect(self.on_table_view_context_menu)
+        self.table_view.customContextMenuRequested.connect(
+            self.on_table_view_context_menu)
+
+        self.table_view.setModel(self.proxy)
+        self.table_view_selection_model = self.table_view.selectionModel()
+        self.table_view_selection_model.selectionChanged.connect(
+            self.on_auto_select_cb)
 
         return self.table_view
 
@@ -537,8 +291,8 @@ class MTTView(QMainWindow):
         self.quick_reload_btn = self.__create_quick_action_button(
                 label=r'&Reload',
                 tooltip="<p style='white-space:pre'>"
-                                "<b>LMB</b> Reload selected files <i>R</i><br>"
-                                "<b>RMB</b> Reload all files <i>Ctrl+Alt+R</i></p>",
+                        "<b>LMB</b> Reload selected files <i>R</i><br>"
+                        "<b>RMB</b> Reload all files <i>Ctrl+Alt+R</i></p>",
                 help_txt='Reload files (shortcut: R)',
                 action=self.on_reload_files,
                 right_action=self.on_reload_all_files)
@@ -548,8 +302,8 @@ class MTTView(QMainWindow):
             self.__create_quick_action_button(
                 label='&Select',
                 tooltip="<p style='white-space:pre'>"
-                                "<b>LMB</b> Select nodes <i>S</i><br>"
-                                "<b>RMB</b> Open node in AE <i>Ctrl+Alt+S</i></p>",
+                        "<b>LMB</b> Select nodes <i>S</i><br>"
+                        "<b>RMB</b> Open node in AE <i>Ctrl+Alt+S</i></p>",
                 help_txt='Select nodes (shortcut: S)',
                 action=self.on_select_nodes,
                 right_action=self.on_open_node_in_attribute_editor)
@@ -558,8 +312,9 @@ class MTTView(QMainWindow):
                 self.__create_quick_action_button(
                     label='Re&name',
                     tooltip="<p style='white-space:pre'>"
-                                    "<b>LMB</b> Rename nodes with filename <i>N</i><br>"
-                                    "<b>RMB</b> Rename all nodes with filename <i>Ctrl+Alt+N</i></p>",
+                            "<b>LMB</b> Rename nodes with filename <i>N</i><br>"
+                            "<b>RMB</b> Rename all nodes with filename "
+                            "<i>Ctrl+Alt+N</i></p>",
                     help_txt='Rename nodes (shortcut: N)',
                     action=self.on_rename_nodes,
                     right_action=self.on_rename_all_nodes)
@@ -568,11 +323,11 @@ class MTTView(QMainWindow):
             self.__create_quick_action_button(
                 label='&View',
                 tooltip="<p style='white-space:pre'>"
-                                "<b>LMB</b> Open files in Viewer <i>V</i><br>"
-                                "<b>RMB</b> Open Viewer <i>Ctrl+Alt+V</i></p>",
+                        "<b>LMB</b> Open files in Viewer <i>V</i><br>"
+                        "<b>RMB</b> Open Viewer <i>Ctrl+Alt+V</i></p>",
                 help_txt='View files in default viewer (shortcut: V)',
                 action=self.on_view_files,
-                right_action=self.on_toolbar_viewer)
+                right_action=self.on_toggle_viewer)
         )
         self.quick_edit_btn = self.__create_quick_action_button(
             label='&Edit',
@@ -580,7 +335,7 @@ class MTTView(QMainWindow):
             help_txt='',
             action=self.on_quick_edit)
         self.quick_action_layout.addWidget(self.quick_edit_btn)
-        self.on_set_source_edit_menu(get_settings_bool_value(self.settings.value('switchEdit', DEFAULT_SWITCH_EDIT)))
+        self.on_set_source_edit_menu(MTTSettings.value('switchEdit'))
 
         return self.quick_action_layout
 
@@ -599,319 +354,30 @@ class MTTView(QMainWindow):
 
         return new_button
 
-    def __create_settings_menu(self):
-        """ Create settings context menu """
-        settings_menu = QMenu(self)
-        settings_menu.setTearOffEnabled(False)
-
-        help_action = QAction('Help', self)
-        help_action.setStatusTip('Opens the online Help page')
-        help_action.triggered.connect(self.on_settings_help)
-        settings_menu.addAction(help_action)
-
-        settings_menu.addSeparator()
-
-        header = QAction('SETTINGS', self)
-        header.setEnabled(False)
-        settings_menu.addAction(header)
-
-        switch_edit_action = QAction('Switch Edit/Source', self)
-        switch_edit_action.setStatusTip('Replace "Edit" button by "Source" button')
-        switch_edit_action.setCheckable(True)
-        switch_edit_action.setChecked(get_settings_bool_value(self.settings.value('switchEdit', DEFAULT_SWITCH_EDIT)))
-        switch_edit_action.triggered.connect(self.on_switch_source_edit_menu)
-        settings_menu.addAction(switch_edit_action)
-
-        headsup_action = QAction('HeadsUp Message', self)
-        headsup_action.setStatusTip('Show HeadsUp Message in viewport')
-        headsup_action.setCheckable(True)
-        headsup_action.setChecked(get_settings_bool_value(self.settings.value('showHeadsUp', DEFAULT_SHOW_HEADSUP)))
-        headsup_action.triggered.connect(self.on_toggle_headsup)
-        settings_menu.addAction(headsup_action)
-
-        focus_filter_action = QAction('Focus Filter Field at Startup', self)
-        focus_filter_action.setStatusTip('Focus filter field at startup')
-        focus_filter_action.setCheckable(True)
-        focus_filter_action.setChecked(get_settings_bool_value(self.settings.value('filterFocus', DEFAULT_FILTER_FOCUS)))
-        focus_filter_action.triggered.connect(self.on_toggle_focus)
-        settings_menu.addAction(focus_filter_action)
-
-        force_relative_path_action = QAction('Force Relative Path', self)
-        force_relative_path_action.setStatusTip('Set a relative path when selecting a new file')
-        force_relative_path_action.setCheckable(True)
-        force_relative_path_action.setChecked(get_settings_bool_value(self.settings.value('forceRelativePath', DEFAULT_FORCE_RELATIVE_PATH)))
-        force_relative_path_action.triggered.connect(self.on_force_relative_path)
-        settings_menu.addAction(force_relative_path_action)
-
-        show_real_attr_value_action = QAction('Show Real Attribute Value', self)
-        show_real_attr_value_action.setStatusTip('Show fullpath instead of filtering path as Attribute Editor')
-        show_real_attr_value_action.setCheckable(True)
-        show_real_attr_value_action.setChecked(get_settings_bool_value(self.settings.value('showRealAttributeValue', DEFAULT_SHOW_REAL_ATTRIBUTE)))
-        show_real_attr_value_action.triggered.connect(self.on_show_real_attribute_value)
-        settings_menu.addAction(show_real_attr_value_action)
-
-        self.instance_menu = QMenu(self)
-        self.instance_menu.setTitle('Prompt Instance Delay')
-        self.instance_menu.aboutToShow.connect(self.on_show_prompt_instance_delay_menu)
-        settings_menu.addMenu(self.instance_menu)
-
-        theme_submenu = QMenu(self)
-        theme_submenu.setTitle('Buttons Theme')
-        theme_submenu.setTearOffEnabled(True)
-        theme_submenu.setWindowTitle(TAG)
-        theme_actions = QActionGroup(self)
-        theme_actions.setExclusive(True)
-        # create ordered theme list
-        custom_order_theme = sorted(self.theme_data.iterkeys())
-        custom_order_theme.remove('Maya Theme')
-        custom_order_theme.insert(0, 'Maya Theme')
-        default_item = True
-        for themeName in custom_order_theme:
-            current_theme_action = QAction(themeName, theme_actions)
-            current_theme_action.setCheckable(True)
-            current_theme_action.setChecked(self.settings.value('theme', 'Maya Theme') == themeName)
-            current_theme_action.triggered.connect(partial(self.on_choose_theme, themeName))
-            theme_submenu.addAction(current_theme_action)
-            if default_item:
-                theme_submenu.addSeparator()
-                default_item = False
-        settings_menu.addMenu(theme_submenu)
-
-        settings_menu.addSeparator()
-
-        header = QAction('FILTER OPTIONS', self)
-        header.setEnabled(False)
-        settings_menu.addAction(header)
-
-        manage_quick_filter_action = QAction('Manage Quick Filters', self)
-        manage_quick_filter_action.setStatusTip('Manage filters that popup with right clic in filter field')
-        manage_quick_filter_action.triggered.connect(self.on_filter_manage_quick_filter)
-        settings_menu.addAction(manage_quick_filter_action)
-
-        clear_completion_cache_action = QAction('Clear Completion Cache', self)
-        clear_completion_cache_action.setStatusTip('Erase auto completion cache of filter field')
-        clear_completion_cache_action.triggered.connect(self.on_filter_clear_completion_cache)
-        settings_menu.addAction(clear_completion_cache_action)
-
-        settings_menu.addSeparator()
-
-        header = QAction('MISC', self)
-        header.setEnabled(False)
-        settings_menu.addAction(header)
-
-        override_panels_action = QAction('Add CreateNode Button to Editors', self)
-        override_panels_action.setStatusTip('Add "Create Node" to HyperShade and Node Editor for the current session')
-        override_panels_action.triggered.connect(self.on_override_panels)
-        settings_menu.addAction(override_panels_action)
-
-        export_to_csv = QAction('Export Texture List as CSV', self)
-        export_to_csv.setStatusTip('Export current texture list into a csv file')
-        export_to_csv.triggered.connect(self.on_export_as_csv)
-        settings_menu.addAction(export_to_csv)
-
-        settings_menu.addSeparator()
-
-        header = QAction('DEBUG', self)
-        header.setEnabled(False)
-        settings_menu.addAction(header)
-
-        self.debug_menu = QMenu(self)
-        self.debug_menu.setTitle('Debug Menu')
-        self.debug_menu.aboutToShow.connect(self.on_show_debug_menu)
-        settings_menu.addMenu(self.debug_menu)
-
-        settings_menu.addSeparator()
-
-        about = QAction('About', self)
-        about.triggered.connect(self.on_settings_about)
-        settings_menu.addAction(about)
-
-        return settings_menu
-
     def __update_node_file_count_ui(self):
-        file_count = self.model.get_file_count()
-        file_str = 'file' if file_count < 1 else 'files'
+        self.status_line_ui.update_node_file_count()
 
-        node_shown_count = self.proxy.rowCount()
-
-        node_count = self.model.get_node_count()
-        node_str = 'node' if node_count < 1 else 'nodes'
-
-        self.stat_info.setText('%d %s | %d/%d %s' % (file_count, file_str, node_shown_count, node_count, node_str))
-
-    #-------------------------------------------------------------------------------------------------------------------
+    # --------------------------------------------------------------------------
     # UI LOGIC
-    def __layout_changed(self):
+    def _layout_changed(self):
         cmds.optionVar(stringValue=('filtered_instances', ''))
-        self.model.emit(SIGNAL("layoutChanged()"))
+        self.model.layoutChanged.emit()
         self.__update_node_file_count_ui()
 
-    @Slot()
-    def on_toolbar_show_only_selection(self):
-        """ Filter nodes from current selection """
-        self.settings.setValue('onlySelectionState', self.selection_btn.isChecked())
-        self.update_selection_change_callback_state(self.selection_btn.isChecked())
+    def on_pin_toggle(self, state):
+        self.model.layoutAboutToBeChanged.emit()
 
-    @Slot()
-    def on_toolbar_show_only_writable(self):
-        """ Filter nodes with their file state """
-        self.model.emit(SIGNAL("layoutAboutToBeChanged()"))
-        self.settings.setValue('onlyWritableState', self.writable_btn.isChecked())
-        self.__layout_changed()
+        nodes = '' if not state else ';'.join(
+            [node.data() for node in self.get_selected_table_nodes()])
 
-    @Slot()
-    def on_toolbar_show_reference(self):
-        """ Filter referenced nodes """
-        self.model.emit(SIGNAL("layoutAboutToBeChanged()"))
-        self.settings.setValue('showReferenceState', self.reference_btn.isChecked())
-        self.__layout_changed()
+        MTTSettings.set_value('pinnedNode', nodes)
 
-    @Slot()
-    def on_toolbar_pin_nodes(self):
-        """ Filter pinned nodes """
-        self.model.emit(SIGNAL("layoutAboutToBeChanged()"))
-        nodes = ''
-        if self.pin_btn.isChecked():
-            nodes = ';'.join([node.data() for node in self.get_selected_table_nodes()])
-        self.settings.setValue('pinnedNode', nodes)
-        self.__layout_changed()
+        self._layout_changed()
 
-    @Slot()
-    def on_toolbar_show_wrong_name(self):
-        """ Filter node with the same name as texture """
-        self.model.emit(SIGNAL("layoutAboutToBeChanged()"))
-        self.settings.setValue('showWrongNameState', self.wrong_name_btn.isChecked())
-        self.__layout_changed()
-
-    @Slot()
-    def on_toolbar_wrong_name_visibility(self):
-        """ Highlight node with the same name as texture """
-        self.model.emit(SIGNAL("layoutAboutToBeChanged()"))
-        self.settings.setValue('vizWrongNameState', self.wrong_name_visibility_btn.isChecked())
-        self.__layout_changed()
-
-    @Slot()
-    def on_toolbar_wrong_path_visibility(self):
-        """ Highlight Texture path clashing with user defined path pattern """
-        self.model.emit(SIGNAL("layoutAboutToBeChanged()"))
-        self.settings.setValue('vizWrongPathState', self.wrong_path_visibility_btn.isChecked())
-        self.__layout_changed()
-
-    @Slot()
-    def on_toolbar_basename_visibility(self):
-        """ Filter file path """
-        self.model.emit(SIGNAL("layoutAboutToBeChanged()"))
-        self.settings.setValue('showBasenameState', self.basename_visibility_btn.isChecked())
-        self.__layout_changed()
-
-    @Slot()
-    def on_toolbar_namespace_visibility(self):
-        """ Filter namespace name """
-        self.model.emit(SIGNAL("layoutAboutToBeChanged()"))
-        self.settings.setValue('showNamespaceState', not self.namespace_visibility_btn.isChecked())
-        self.__layout_changed()
-
-    @Slot()
-    def on_toolbar_filter_instances(self):
-        """ Show only one instance per file """
-        self.model.emit(SIGNAL("layoutAboutToBeChanged()"))
-        self.settings.setValue('filterInstances', self.filter_instances_btn.isChecked())
-        self.__layout_changed()
-
-    @Slot()
-    def on_toolbar_open_sourceimages_folder(self):
-        """ Open sourceimages folder """
-        folder_path = self.model.get_sourceimages_path()
-        if os.path.isdir(folder_path):
-            os.startfile(folder_path)
-        # launchImageEditor can be an alternative
-        # cmds.launchImageEditor(viewImageFile=directory)
-
-    @Slot()
-    def on_toolbar_open_source_folder(self):
-        """ Open source folder """
-        folder_path = self.get_texture_source_folder()
-        if os.path.isdir(folder_path):
-            os.startfile(folder_path)
-
-    @Slot()
-    def on_toolbar_viewer(self):
-        """ Toggle Viewer """
-        if self.viewer_dock is None:
-            self.viewer_dock = MTTDockWidget(self.settings, VIEWER_TITLE, self)
-
-            dock_size = self.settings.value('Viewer/dockGeometry', QRect(0, 0, 256, 256))
-            dock_is_floating = get_settings_bool_value(self.settings.value('Viewer/isFloating', DEFAULT_VIEWER_IS_FLOATING))
-            if dock_is_floating:
-                self.viewer_dock.setVisible(False)
-
-            self.viewer_view = mttViewer.MTTViewer(settings=self.settings)
-            dock_frame = MTTDockFrame(self, dock_size.width(), dock_size.height())
-            dock_frame_layout = QHBoxLayout()
-            dock_frame_layout.setContentsMargins(0, 0, 0, 0)
-            dock_frame_layout.addWidget(self.viewer_view)
-            dock_frame.setLayout(dock_frame_layout)
-
-            self.viewer_dock.setObjectName(VIEWER_DOCK_NAME)
-            self.viewer_dock.setFloating(dock_is_floating)
-            self.viewer_dock.setWidget(dock_frame)
-
-            # self.viewer_dock.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable)
-            self.viewer_dock.topLevelChanged.connect(self.on_viewer_top_level_changed)
-            if dock_is_floating:
-                self.viewer_dock.setWindowFlags(Qt.Window)
-
-            self.addDockWidget(self.dock_side_data[self.settings.value('Viewer/side', 'Right')], self.viewer_dock)
-
-            self.viewer_dock.setGeometry(dock_size)
-            self.viewer_dock.setVisible(True)
-
-            self.table_view_selection_model.selectionChanged.connect(self.on_auto_show_texture)
-            self.settings.setValue('viewerState', True)
-            self.display_current_texture()
-        else:
-            state = not self.viewer_dock.isVisible()
-            self.viewer_dock.setVisible(state)
-            self.settings.setValue('viewerState', state)
-            if state:
-                self.table_view_selection_model.selectionChanged.connect(self.on_auto_show_texture)
-                self.display_current_texture()
-            else:
-                self.table_view_selection_model.selectionChanged.disconnect(self.on_auto_show_texture)
-
-    def on_viewer_top_level_changed(self, is_floating):
-        if is_floating:
-            self.viewer_dock.setWindowFlags(Qt.Window)
-            self.viewer_dock.show()
-
-    @Slot()
-    def on_toolbar_create_node(self):
-        mttFilterFileDialog.create_nodes()
-
-    @staticmethod
-    @Slot()
-    def on_toolbar_hypershade():
-        """ Open Maya Hypershade """
-        cmds.HypershadeWindow()
-
-    @staticmethod
-    @Slot()
-    def on_toolbar_node_editor():
-        """ Open Maya Hypershade """
-        cmds.NodeEditorWindow()
-
-    @staticmethod
-    @Slot()
-    def on_toolbar_uv_editor():
-        """ Open Maya UV Texture Editor """
-        cmds.TextureViewWindow()
-
-    @Slot(str)
-    def on_filter_set_text(self, text):
+    def on_filter_set_text(self, text=''):
         """ Set text in filter field """
         self.filter_line_edit.setText(text)
 
-    @Slot(str)
     def on_filter_text_changed(self, text):
         """ Apply filter string """
         cmds.optionVar(stringValue=('filtered_instances', ''))
@@ -929,20 +395,6 @@ class MTTView(QMainWindow):
         self.proxy.setFilterRegExp(search)
         self.__update_node_file_count_ui()
 
-    @Slot()
-    def on_filter_manage_quick_filter(self):
-        """ Open Quick Filter words manager and save its content """
-        manager = MTTQuickFilterManager(self, self.settings)
-        if manager.exec_():
-            lists = manager.get_lists()
-            # save list in settings
-            self.settings.setValue('filterQuickWordsWildcard', ';;'.join(lists[0]))
-            self.settings.setValue('filterQuickWordsRegExp', ';;'.join(lists[1]))
-            # set current list
-            self.quick_filter_words = lists[get_settings_bool_value(self.settings.value('filterRE', DEFAULT_FILTER_RE))]
-        manager.deleteLater()
-
-    @Slot(QPoint)
     def on_filter_quick_filter_menu(self, point):
         """ Create Quick Filter context menu """
         history_menu = QMenu(self)
@@ -960,14 +412,13 @@ class MTTView(QMainWindow):
 
         history_menu.popup(self.filter_line_edit.mapToGlobal(point))
 
-    @Slot()
     def on_filter_add_completion_item(self):
         """ Add new entry to completion cache """
         filter_text = self.filter_line_edit.text()
         if len(filter_text) < 2:
             return
 
-        if get_settings_bool_value(self.settings.value('filterRE', DEFAULT_FILTER_RE)):
+        if MTTSettings.value('filterRE'):
             setting_name = 'filterCompletionRegExp'
         else:
             setting_name = 'filterCompletionWildcard'
@@ -979,23 +430,14 @@ class MTTView(QMainWindow):
                 items.append(filter_text)
                 items.sort()
                 self.completion_model.setStringList(items)
-                self.settings.setValue(setting_name, ';;'.join(items))
+                MTTSettings.set_value(setting_name, ';;'.join(items))
         else:
             self.completion_model.setStringList([filter_text])
-            self.settings.setValue(setting_name, filter_text)
+            MTTSettings.set_value(setting_name, filter_text)
 
-    @Slot()
-    def on_filter_clear_completion_cache(self):
-        """ Clear filter auto completion cache """
-        self.on_filter_set_text('')
-        self.settings.remove('filterCompletionWildcard')
-        self.settings.remove('filterCompletionRegExp')
-        self.completion_model.setStringList([])
-
-    @Slot()
     def on_filter_toggle_re(self):
         """ Toggle Regular Expression Filter """
-        self.settings.setValue('filterRE', self.filter_re_btn.isChecked())
+        MTTSettings.set_value('filterRE', self.filter_re_btn.isChecked())
         filter_text = self.filter_line_edit.text()
         self.filter_line_edit.textChanged.disconnect(self.on_filter_text_changed(text=''))
         self.filter_line_edit.setText('')
@@ -1004,7 +446,6 @@ class MTTView(QMainWindow):
         self.completion_model.setStringList(self.get_filter_completion_words())
         self.quick_filter_words = self.get_filter_quick_words()
 
-    @Slot(int)
     def on_filter_index_changed(self, index):
         """ Change column filter """
         if index == 0:
@@ -1012,7 +453,6 @@ class MTTView(QMainWindow):
         elif index == 1:
             self.proxy.setFilterKeyColumn(NODE_FILE)
 
-    @Slot(QPoint)
     def on_column_header_context_menu(self, point):
         """ Create context menu for header visibility """
         if self.header_menu is not None and self.header_menu.isTearOffMenuVisible():
@@ -1024,7 +464,7 @@ class MTTView(QMainWindow):
 
         is_last_item = self.table_view.horizontalHeader().hiddenSectionCount() == COLUMN_COUNT - 1
         for columnId in range(COLUMN_COUNT):
-            state = get_settings_bool_value(self.settings.value('columnVisibility_%s' % columnId, True))
+            state = MTTSettings.value('columnVisibility_%s' % columnId, True)
             current_action = QAction(VIEW_COLUMN_CONTEXT[columnId], self)
             current_action.setCheckable(True)
             current_action.setChecked(state)
@@ -1035,7 +475,6 @@ class MTTView(QMainWindow):
 
         self.header_menu.popup(self.table_view.horizontalHeader().mapToGlobal(point))
 
-    @Slot(QPoint)
     def on_table_view_context_menu(self, point):
         """ Create table context menu """
 
@@ -1096,7 +535,25 @@ class MTTView(QMainWindow):
         rename_with_custom_name_action.triggered.connect(self.on_rename_file_with_custom_name)
         table_menu.addAction(rename_with_custom_name_action)
 
-        if self.power_user:
+        if MTTSettings.VCS:
+            table_menu.addSeparator()
+
+            if 'checkout' in MTTSettings.VCS:
+                check_out_action = QAction('Checkout', self)
+                check_out_action.triggered.connect(self.on_checkout)
+                table_menu.addAction(check_out_action)
+
+            if 'submit' in MTTSettings.VCS:
+                check_in_action = QAction('submit', self)
+                check_in_action.triggered.connect(self.on_submit)
+                table_menu.addAction(check_in_action)
+
+            if 'revert' in MTTSettings.VCS:
+                revert_action = QAction('Revert', self)
+                revert_action.triggered.connect(self.on_revert)
+                table_menu.addAction(revert_action)
+
+        if MTTSettings.value('powerUser'):
             table_menu.addSeparator()
             toggle_readonly = QAction('Toggle Read-Only', self)
             toggle_readonly.triggered.connect(self.on_toggle_readonly)
@@ -1105,20 +562,18 @@ class MTTView(QMainWindow):
         offset = QPoint(0, self.table_view.horizontalHeader().height())
         table_menu.popup(self.table_view.mapToGlobal(point) + offset)
 
-    @Slot(int)
     def on_column_header_show_column(self, column_id):
         """ Hide/Show table column """
-        state = not get_settings_bool_value(self.settings.value('columnVisibility_%s' % column_id, True))
+        state = not MTTSettings.value('columnVisibility_%s' % column_id, True)
         self.table_view.setColumnHidden(column_id, not state)
-        self.settings.setValue('columnVisibility_%s' % column_id, state)
+        MTTSettings.set_value('columnVisibility_%s' % column_id, state)
 
-    #@Slot(bool)
-    @waitingcursor
+    @wait_cursor
     def on_reload_files(self, all_node=False):
         """ Reload selected files """
         nodes = self.get_all_table_nodes() if all_node else self.get_selected_table_nodes()
         if nodes:
-            reloaded_files = list()
+            reloaded_files = []
             self.model.is_reloading_file = True
             for node in [data.data() for data in nodes]:
                 node_attr_name = self.supported_format_dict[cmds.nodeType(node)]
@@ -1127,31 +582,27 @@ class MTTView(QMainWindow):
                     reloaded_files.append(node_attr_value)
                     cmds.setAttr('%s.%s' % (node, node_attr_name), node_attr_value, type="string")
             self.model.is_reloading_file = False
-            self.__output_message('%d node%s reloaded' % (len(nodes), ('s' if len(nodes) > 1 else '')), verbose=True)
+            mtt_log('%d node%s reloaded' % (len(nodes), ('s' if len(nodes) > 1 else '')), verbose=True)
         else:
-            self.__output_message('Nothing selected... nothing to reload')
+            mtt_log('Nothing selected... nothing to reload')
 
-    @Slot()
     def on_reload_all_files(self):
         self.on_reload_files(all_node=True)
 
-    #@Slot()
-    @waitingcursor
+    @wait_cursor
     def on_select_nodes(self):
         nodes = self.get_selected_table_nodes()
         if nodes:
             cmds.select([data.data() for data in nodes], replace=True)
-            self.__output_message('%d node%s selected' % (len(nodes), ('s' if len(nodes) > 1 else '')))
+            mtt_log('%d node%s selected' % (len(nodes), ('s' if len(nodes) > 1 else '')))
         else:
-            self.__output_message('Nothing selected... nothing to select')
+            mtt_log('Nothing selected... nothing to select')
 
-    @Slot()
     def on_open_node_in_attribute_editor(self):
         nodes = self.get_selected_table_nodes()
         mel.eval('showEditorExact("' + nodes[0].data() + '")')
 
-    #@Slot(bool)
-    @waitingcursor
+    @wait_cursor
     def on_rename_nodes(self, all_node=False):
         nodes = self.get_all_table_nodes() if all_node else self.get_selected_table_nodes()
         if nodes:
@@ -1162,24 +613,21 @@ class MTTView(QMainWindow):
                     new_name = self.model.rename_maya_node(nodeName, wanted_name)
                     if new_name != nodeName:
                         rename_count += 1
-            self.__output_message(
+            mtt_log(
                 '%d/%d node%s renamed with filename' % (rename_count, len(nodes), ('s' if len(nodes) > 1 else '')),
                 verbose=True
             )
         else:
-            self.__output_message('Nothing selected... nothing to rename')
+            mtt_log('Nothing selected... nothing to rename')
 
-    @Slot()
     def on_rename_all_nodes(self):
         self.on_rename_nodes(all_node=True)
 
-    @Slot()
     def on_view_files(self, edit=False):
         nodes = self.get_selected_table_nodes()
         if nodes:
-            viewed_image = list()
+            viewed_image = []
             for node in nodes:
-                # nodeName = node.data().toString().toLocal8Bit().data() -> original
                 node_name = node.data()
                 absolute_path = self.model.get_node_file_fullpath(node_name)
                 if absolute_path not in viewed_image:
@@ -1192,22 +640,19 @@ class MTTView(QMainWindow):
                     else:
                         filename = os.path.basename(absolute_path)
                         if filename != '.':
-                            self.__output_message('File "%s" not found' % filename, verbose=True)
+                            mtt_log('File "%s" not found' % filename, verbose=True)
         else:
-            self.__output_message('Nothing selected... nothing to show')
+            mtt_log('Nothing selected... nothing to show')
 
-    @Slot()
     def on_edit_files(self):
         self.on_view_files(edit=True)
 
-    @Slot()
     def on_quick_edit(self):
-        if get_settings_bool_value(self.settings.value('switchEdit', DEFAULT_SWITCH_EDIT)):
+        if MTTSettings.value('switchEdit'):
             self.on_edit_source_files()
         else:
             self.on_edit_files()
 
-    @Slot()
     def on_set_source_edit_menu(self, state):
         if state:
             self.quick_edit_btn.setText('Source')
@@ -1218,41 +663,74 @@ class MTTView(QMainWindow):
             self.quick_edit_btn.setToolTip("<p style='white-space:pre'>Edit files in %s <i>E</i></p>" % self.image_editor_name)
             self.quick_edit_btn.setStatusTip('Edit files in %s (shortcut: E)' % self.image_editor_name)
 
-    @Slot()
-    def on_switch_source_edit_menu(self):
-        state = get_settings_bool_value(self.settings.value('switchEdit', DEFAULT_SWITCH_EDIT))
-        self.settings.setValue('switchEdit', not state)
-        self.on_set_source_edit_menu(not state)
+    def on_toggle_viewer(self):
+        """ Toggle Viewer """
+        self.table_view_selection_model = self.table_view.selectionModel()
 
-    @Slot()
-    def on_toggle_headsup(self):
-        state = get_settings_bool_value(self.settings.value('showHeadsUp', DEFAULT_SHOW_HEADSUP))
-        self.settings.setValue('showHeadsUp', not state)
+        if self.viewer_dock is None:
+            # init value
+            MTTSettings.set_value('viewerState', True)
 
-    @Slot()
-    def on_toggle_focus(self):
-        state = get_settings_bool_value(self.settings.value('filterFocus', DEFAULT_FILTER_FOCUS))
-        self.settings.setValue('filterFocus', not state)
+            # get default values
+            default_size = QRect(0, 0, 256, 256)
+            dock_size = MTTSettings.value('Viewer/dockGeometry', default_size)
+            dock_is_floating = MTTSettings.value('Viewer/isFloating')
 
-    @Slot()
-    def on_force_relative_path(self):
-        state = get_settings_bool_value(self.settings.value('forceRelativePath', DEFAULT_FORCE_RELATIVE_PATH))
-        self.settings.setValue('forceRelativePath', not state)
+            # create widgets
+            self.viewer_dock = MTTDockWidget(VIEWER_TITLE)
+            self.viewer_view = mttViewer.MTTViewer()
+            dock_frame = MTTDockFrame(
+                self, dock_size.width(), dock_size.height())
 
-    @Slot()
-    def on_show_real_attribute_value(self):
-        self.model.emit(SIGNAL("layoutAboutToBeChanged()"))
-        show_real_attribute_state = get_settings_bool_value(self.settings.value('showRealAttributeValue', DEFAULT_SHOW_REAL_ATTRIBUTE))
-        self.settings.setValue('showRealAttributeValue', not show_real_attribute_state)
-        self.__layout_changed()
+            # layout widgets
+            dock_frame_layout = QHBoxLayout()
+            dock_frame_layout.setContentsMargins(0, 0, 0, 0)
+            dock_frame_layout.addWidget(self.viewer_view)
+            dock_frame.setLayout(dock_frame_layout)
+            self.viewer_dock.setObjectName(VIEWER_DOCK_NAME)
+            self.viewer_dock.setWidget(dock_frame)
 
-    @Slot()
-    def on_choose_instance_delay(self, delay_id, result=-1, prompt=True):
+            self.addDockWidget(
+                self.dock_side_data[MTTSettings.value('Viewer/side', 'Right')],
+                self.viewer_dock
+            )
+
+            # init callback
+            self.viewer_dock.topLevelChanged.connect(
+                self.on_viewer_top_level_changed)
+            self.table_view_selection_model.selectionChanged.connect(
+                self.on_auto_show_texture)
+
+            # update
+            self.viewer_dock.setFloating(dock_is_floating)
+            self.viewer_dock.setGeometry(dock_size)
+            self.viewer_dock.setVisible(True)
+            self.display_current_texture()
+        else:
+            state = not self.viewer_dock.isVisible()
+            self.viewer_dock.setVisible(state)
+            MTTSettings.set_value('viewerState', state)
+            if state:
+                self.table_view_selection_model.selectionChanged.connect(self.on_auto_show_texture)
+                self.display_current_texture()
+            else:
+                self.table_view_selection_model.selectionChanged.disconnect(self.on_auto_show_texture)
+
+    def on_viewer_top_level_changed(self, is_floating):
+        if is_floating:
+            self.viewer_dock.setWindowFlags(Qt.Window)
+            self.viewer_dock.show()
+
+    @staticmethod
+    def on_choose_instance_delay(delay_id, result=-1, prompt=True):
+        msg = ('When textures path are modified,\n'
+               'do you want to apply changes to all instances ?')
+
         if prompt:
             message_box = QMessageBox()
             message_box.setWindowTitle(WINDOW_TITLE)
             message_box.setIcon(QMessageBox.Question)
-            message_box.setText('When textures path are modified,\ndo you want to apply changes to all instances ?')
+            message_box.setText(msg)
             message_box.setStandardButtons(QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel)
             message_box.setEscapeButton(QMessageBox.Cancel)
             message_box.setDefaultButton(QMessageBox.Yes)
@@ -1270,10 +748,9 @@ class MTTView(QMainWindow):
         cmds.optionVar(fv=['MTT_prompt_instance_suspend', time()])
         cmds.optionVar(iv=['MTT_prompt_instance_value', result])
 
-    @Slot()
     def on_choose_theme(self, theme_name):
-        theme_name = theme_name if theme_name in self.theme_data else 'Maya Theme'
-        self.settings.setValue('theme', theme_name)
+        theme_name = theme_name if theme_name in THEMES else 'Maya Theme'
+        MTTSettings.set_value('theme', theme_name)
         btn_default_bg_color = QApplication.palette().button().color().name()
         btn_default_text_color = QApplication.palette().buttonText().color().name()
         custom_buttons = self.findChildren(RightPushButton, QRegExp('.*'))
@@ -1283,7 +760,7 @@ class MTTView(QMainWindow):
                 current_bg_color = btn_default_bg_color
                 current_text_color = btn_default_text_color
             else:
-                current_bg_color = self.theme_data[theme_name][i]
+                current_bg_color = THEMES[theme_name][i]
                 # get background luminance
                 bg_color = QColor(current_bg_color)
                 photometric_lum = (0.2126 * bg_color.red()) + (0.7152 * bg_color.green()) + (0.0722 * bg_color.blue())
@@ -1297,7 +774,6 @@ class MTTView(QMainWindow):
             )
 
     # noinspection PyUnusedLocal
-    @Slot()
     def on_auto_show_texture(self, selected, deselected):
         if cmds.optionVar(query='suspendCallbacks'):
             return
@@ -1311,97 +787,76 @@ class MTTView(QMainWindow):
         # file_path = self.model.get_node_file_fullpath(current_node_name)
         # self.viewer_view.show_image(file_path)
 
-    @Slot()
-    def on_auto_reload(self):
-        state = get_settings_bool_value(self.settings.value('autoReload', DEFAULT_AUTO_RELOAD))
-        self.settings.setValue('autoReload', not state)
-
-    @Slot()
-    def on_auto_select(self):
-        state = get_settings_bool_value(self.settings.value('autoSelect', DEFAULT_AUTO_SELECT))
-        self.settings.setValue('autoSelect', not state)
-
-    @Slot()
-    def on_auto_select_node(self, selected, deselected):
-        if get_settings_bool_value(self.settings.value('autoSelect', DEFAULT_AUTO_SELECT)):
+    def on_auto_select_cb(self, selected, deselected):
+        if MTTSettings.value('autoSelect'):
             cmds.optionVar(intValue=('suspendCallbacks', True))
-            nodes = list()
+            nodes = []
             for node in self.get_selected_table_nodes():
                 nodes.append(node.data())
             if nodes:
                 cmds.select(nodes, replace=True)
                 cmds.optionVar(intValue=('suspendCallbacks', False))
 
-    @Slot()
-    def on_auto_rename(self):
-        state = get_settings_bool_value(self.settings.value('autoRename', DEFAULT_AUTO_RENAME))
-        self.settings.setValue('autoRename', not state)
-
-    def on_auto_rename_node(self, node_name):
+    def on_rename_node(self, node_name):
         wanted_name = self.model.get_node_file_basename(node_name)
-        if len(wanted_name):
+        if wanted_name:
             self.model.rename_maya_node(node_name, wanted_name, deferred=True)
 
-    @Slot()
     def on_edit_source_files(self):
-        source_folder = self.get_texture_source_folder()
+        source_files = set()
+        read_only_files = set()
+        missing_files = set()
+
         nodes = self.get_selected_table_nodes()
-        if nodes:
-            psd_files = list()
-            missing_files = list()
-            for node in nodes:
-                psd_found = False
+        if not nodes:
+            mtt_log('Nothing selected... nothing to show')
+            return
 
-                # get file path and filename
-                node_name = node.data()
-                absolute_path = self.model.get_node_file_fullpath(node_name)
-                filename = os.path.basename(absolute_path)
+        # parse all selected nodes
+        for node in nodes:
+            node_name = node.data()
+            absolute_path = self.model.get_node_file_fullpath(node_name)
 
-                if filename != '.':
-                    # split filename with underscore
-                    file_without_ext = os.path.splitext(filename)[0]
-                    file_token = file_without_ext.split('_')
-                    file_token_len = len(file_token)
+            # avoid extra processing/request for already scanned files
+            if absolute_path in source_files:
+                continue
 
-                    for n in xrange(file_token_len):
-                        # remove token one by one starting at the end of the string
-                        split_num = file_token_len - n
-                        file_without_ext = '_'.join(file_token[:split_num])
-                        psd_file = os.path.join(source_folder, file_without_ext + '.psd')
+            # get source file for current node
+            source_file = get_source_file(absolute_path)
 
-                        # if file doesn't exists try without another token
-                        if not os.path.isfile(psd_file):
-                            continue
+            # store files without source file
+            if not source_file:
+                missing_files.add(absolute_path)
+                continue
 
-                        # continue if psd file wasn't already opened
-                        if psd_file not in psd_files:
-                            psd_found = True
-                            psd_files.append(psd_file)
-                            if os.access(psd_file, os.W_OK):
-                                cmds.launchImageEditor(editImageFile=psd_file)
-                                self.__output_message('Opening "%s"' % psd_file, verbose=True)
-                            else:
-                                if self.__prompt_for_open_readonly_source_file(psd_file):
-                                    cmds.launchImageEditor(editImageFile=psd_file)
-                                    self.__output_message('Opening "%s"' % psd_file, verbose=True)
-                                else:
-                                    self.__output_message('Opening Aborted for "%s"' % psd_file, verbose=True)
+            # finally sort writable and non-writable source files
+            if os.access(source_file, os.W_OK):
+                source_files.add(source_file)
+            else:
+                read_only_files.add(source_file)
 
-                            # stop iterating tokens
-                            break
+        # open writable source files
+        for source in source_files:
+            cmds.launchImageEditor(editImageFile=source)
+            mtt_log('Opening "%s"' % source, verbose=True)
 
-                # if no psd file found, warn user
-                if not psd_found and absolute_path not in missing_files:
-                    missing_files.append(absolute_path)
-                    self.__output_message('No PSD found for "%s"' % filename, verbose=True, msg_type='warning')
-        else:
-            self.__output_message('Nothing selected... nothing to show')
+        # open writable source files if user want it
+        for source in read_only_files:
+            if self.__prompt_for_open_readonly_source_file(source):
+                cmds.launchImageEditor(editImageFile=source)
+                mtt_log('Opening "%s"' % source, verbose=True)
+            else:
+                mtt_log('Opening Aborted for "%s"' % source, verbose=True)
 
-    @Slot()
+        # log missing source files
+        for source in missing_files:
+            mtt_log('No PSD found for "%s"' % source,
+                    verbose=True, msg_type='warning')
+
     def on_open_file_folder(self):
         nodes = self.get_selected_table_nodes()
         if nodes:
-            opened_folder = list()
+            opened_folder = []
             for node in nodes:
                 node_name = node.data()
                 folder_pat = os.path.dirname(self.model.get_node_file_fullpath(node_name))
@@ -1410,10 +865,9 @@ class MTTView(QMainWindow):
                     if os.path.isdir(folder_pat):
                         os.startfile(folder_pat)
 
-    @Slot()
     def on_select_objects_with_shaders(self):
         nodes = self.get_selected_table_nodes()
-        objects = list()
+        objects = []
 
         if nodes:
             shading_groups = self.get_shading_group([node.data() for node in nodes])
@@ -1425,10 +879,9 @@ class MTTView(QMainWindow):
         else:
             cmds.select(clear=True)
 
-    @Slot()
     def on_select_objects_with_textures(self):
-        nodes = list()
-        objects = list()
+        nodes = []
+        objects = []
 
         tmp_nodes = self.get_selected_table_nodes()
         for tmpNode in tmp_nodes:
@@ -1450,8 +903,7 @@ class MTTView(QMainWindow):
         else:
             cmds.select(clear=True)
 
-    #@Slot()
-    @waitingcursor
+    @wait_cursor
     def on_convert_to_relative_path(self):
         nodes = self.get_selected_table_nodes(is_instance_aware=True)
         self.model.suspend_force_sort = True
@@ -1469,8 +921,7 @@ class MTTView(QMainWindow):
         self.is_batching_change_attr = False
         self.model.request_sort()
 
-    #@Slot()
-    @waitingcursor
+    @wait_cursor
     def on_convert_to_absolute_path(self):
         nodes = self.get_selected_table_nodes(is_instance_aware=True)
         self.model.suspend_force_sort = True
@@ -1488,8 +939,7 @@ class MTTView(QMainWindow):
         self.is_batching_change_attr = False
         self.model.request_sort()
 
-    #@Slot()
-    @waitingcursor
+    @wait_cursor
     def on_set_custom_path(self):
             QApplication.setOverrideCursor(QCursor(Qt.ArrowCursor))
             custom_path = cmds.fileDialog2(
@@ -1517,8 +967,7 @@ class MTTView(QMainWindow):
                 self.is_batching_change_attr = False
                 self.model.request_sort()
 
-    #@Slot()
-    @waitingcursor
+    @wait_cursor
     def on_copy_files_to_workspace(self):
         self.model.suspend_force_sort = True
         self.is_batching_change_attr = True
@@ -1555,11 +1004,11 @@ class MTTView(QMainWindow):
                                 os.chmod(destination_path, stat.S_IWRITE)
 
                         if cmds.sysFile(file_fullpath, copy=destination_path):
-                            self.__output_message('%s copied.' % os.path.basename(destination_path), verbose=True)
+                            mtt_log('%s copied.' % os.path.basename(destination_path), verbose=True)
                             os.chmod(destination_path, stat.S_IWRITE)
                             cmds.setAttr('%s.%s' % (node_name, node_attr_name), destination_path, type="string")
                         else:
-                            self.__output_message('%s copy failed.' % os.path.basename(destination_path), msg_type='warning', verbose=True)
+                            mtt_log('%s copy failed.' % os.path.basename(destination_path), msg_type='warning', verbose=True)
                     else:
                         if file_history[file_fullpath]:
                             cmds.setAttr('%s.%s' % (node_name, node_attr_name), file_history[file_fullpath], type="string")
@@ -1613,9 +1062,9 @@ class MTTView(QMainWindow):
                             if cmds.sysFile(file_fullpath, rename=new_path):
                                 cmds.setAttr('%s.%s' % (node_name, node_attr_name), new_path, type="string")
                             else:
-                                self.__output_message('%s rename failed.' % filename, msg_type='warning', verbose=True)
+                                mtt_log('%s rename failed.' % filename, msg_type='warning', verbose=True)
                         else:
-                            self.__output_message('%s rename aborted (read-only).' % filename, msg_type='warning', verbose=True)
+                            mtt_log('%s rename aborted (read-only).' % filename, msg_type='warning', verbose=True)
                     else:
                         if file_history[file_fullpath]:
                             cmds.setAttr('%s.%s' % (node_name, node_attr_name), file_history[file_fullpath], type="string")
@@ -1624,8 +1073,7 @@ class MTTView(QMainWindow):
             self.is_batching_change_attr = False
             self.model.request_sort()
 
-    #@Slot()
-    @waitingcursor
+    @wait_cursor
     def on_rename_file_with_node_name(self):
         if self.__prompt_for_rename_without_undo():
             undo_state = cmds.undoInfo(query=True, state=True)
@@ -1635,8 +1083,7 @@ class MTTView(QMainWindow):
             finally:
                 cmds.undoInfo(stateWithoutFlush=undo_state)
 
-    #@Slot()
-    @waitingcursor
+    @wait_cursor
     def on_rename_file_with_custom_name(self):
         if self.__prompt_for_rename_without_undo():
             undo_state = cmds.undoInfo(query=True, state=True)
@@ -1646,12 +1093,33 @@ class MTTView(QMainWindow):
             finally:
                 cmds.undoInfo(stateWithoutFlush=undo_state)
 
-    #@Slot()
-    @waitingcursor
+    def on_checkout(self, files=None):
+        if not files:
+            nodes = self.get_selected_table_nodes()
+            files = [self.model.get_node_file_fullpath(n.data()) for n in nodes]
+
+        exec MTTSettings.VCS['checkout']
+        checkout(set(files))
+
+    def on_submit(self):
+        nodes = self.get_selected_table_nodes()
+        files = [self.model.get_node_file_fullpath(n.data()) for n in nodes]
+
+        exec MTTSettings.VCS['submit']
+        submit(set(files))
+
+    def on_revert(self):
+        nodes = self.get_selected_table_nodes()
+        files = [self.model.get_node_file_fullpath(n.data()) for n in nodes]
+
+        exec MTTSettings.VCS['revert']
+        revert(set(files))
+
+    @wait_cursor
     def on_toggle_readonly(self):
         nodes = self.get_selected_table_nodes()
         if nodes:
-            toggled_files = list()
+            toggled_files = []
 
             for node in nodes:
                 node_name = node.data()
@@ -1664,181 +1132,8 @@ class MTTView(QMainWindow):
                 os.chmod(file_fullpath, (stat.S_IWRITE if is_readonly else stat.S_IREAD))
                 toggled_files.append(file_fullpath)
 
-    @staticmethod
-    @Slot()
-    def on_settings_help():
-        help_wiki = 'https://github.com/Bioeden/dbMayaTextureToolkit/wiki'
-        webbrowser.open(help_wiki)
-
-
-    @Slot()
-    def on_show_prompt_instance_delay_menu(self):
-        prompt_instance_state = cmds.optionVar(query='MTT_prompt_instance_state')
-
-        if prompt_instance_state == PROMPT_INSTANCE_WAIT:
-            elapsed_time = time() - cmds.optionVar(query='MTT_prompt_instance_suspend')
-            if elapsed_time > PROMPT_INSTANCE_WAIT_DURATION:
-                prompt_instance_state = PROMPT_INSTANCE_ASK
-                cmds.optionVar(iv=['MTT_prompt_instance_state', prompt_instance_state])
-            else:
-                self.__output_message('Remaining %.2fs' % (PROMPT_INSTANCE_WAIT_DURATION - elapsed_time))
-        elif prompt_instance_state == PROMPT_INSTANCE_SESSION:
-            if not 'mtt_prompt_session' in __main__.__dict__:
-                prompt_instance_state = PROMPT_INSTANCE_ASK
-                cmds.optionVar(iv=['MTT_prompt_instance_state', prompt_instance_state])
-
-        self.instance_menu.clear()
-
-        prompt_delay = QActionGroup(self)
-        prompt_delay.setExclusive(True)
-        for i in range(len(PROMPT_INSTANCE_STATE.keys())):
-            current_delay_action = QAction(PROMPT_INSTANCE_STATE[i], prompt_delay)
-            current_delay_action.setCheckable(True)
-            current_delay_action.setChecked(prompt_instance_state == i)
-            current_delay_action.triggered.connect(partial(self.on_choose_instance_delay, i, prompt=i != 0))
-            self.instance_menu.addAction(current_delay_action)
-
-    @Slot()
-    def on_show_debug_menu(self):
-        self.debug_menu.clear()
-
-        if self.is_master_cmd or self.power_user:
-            power_user_mode = QAction('Power User Mode', self)
-            power_user_mode.setCheckable(True)
-            power_user_mode.setChecked(get_settings_bool_value(self.settings.value('powerUser', DEFAULT_POWER_USER)))
-            power_user_mode.triggered.connect(self.__on_toggle_power_user)
-            self.debug_menu.addAction(power_user_mode)
-            self.is_master_cmd = False
-
-            self.debug_menu.addSeparator()
-
-        open_pref_folder_action = QAction('Open Preferences Folder', self)
-        open_pref_folder_action.setStatusTip('Open MTT preference folder')
-        open_pref_folder_action.triggered.connect(self.on_open_preference_folder)
-        self.debug_menu.addAction(open_pref_folder_action)
-
-        self.debug_menu.addSeparator()
-
-        database_dump_csv = QAction('Dump Database as CSV', self)
-        database_dump_csv.triggered.connect(self.model.database_dump_csv)
-        self.debug_menu.addAction(database_dump_csv)
-
-        database_dump_sql = QAction('Dump Database as SQL', self)
-        database_dump_sql.triggered.connect(self.model.database_dump_sql)
-        self.debug_menu.addAction(database_dump_sql)
-
-        self.debug_menu.addSeparator()
-
-        self.support_info = QMenu(self)
-        self.support_info.setTitle('Supported Node Type')
-        self.support_info.aboutToShow.connect(self.on_show_supported_type)
-        self.debug_menu.addMenu(self.support_info)
-
-    @Slot()
-    def on_show_supported_type(self):
-        node_types = sorted([nodetype for (nodetype, nice, attr) in SUPPORTED_TYPE] + UNSUPPORTED_TYPE)
-        self.support_info.clear()
-
-        for nodetype in node_types:
-            current = QAction(nodetype, self)
-            current.setEnabled(False)
-            current.setCheckable(True)
-            current.setChecked(nodetype not in UNSUPPORTED_TYPE)
-            self.support_info.addAction(current)
-
-    @Slot()
-    def __on_toggle_power_user(self):
-        state = get_settings_bool_value(self.settings.value('powerUser', DEFAULT_POWER_USER))
-        self.settings.setValue('powerUser', not state)
-        self.power_user = not state
-
-    @Slot()
-    def on_export_as_csv(self):
-        """ Export texture listing in csv file """
-        file_content = self.model.get_database_content_as_csv()
-
-        # check if current scene is empty
-        if not file_content:
-            db_output('Nothing to save. Operation aborted.', msg_type='warning')
-            return
-
-        # clean output
-        convert_nicename = dict(zip([n for t, n, a in SUPPORTED_TYPE], [t for t, n, a in SUPPORTED_TYPE]))
-        for i, row in enumerate(file_content):
-            node_type = convert_nicename[row[1]]
-            ref_str = 'True' if row[2] == 1 else ''
-            missing_str = 'True' if row[3] == -1 else ''
-            file_content[i] = (row[0], node_type, ref_str, missing_str, row[4], row[5])
-
-        # query file to write
-        scene_name = os.path.basename(cmds.file(query=True, sceneName=True))
-        file_path = os.path.join(cmds.workspace(query=True, rootDirectory=True), scene_name)
-        csv_path = cmds.fileDialog2(
-            fileFilter='Texture List (*.csv)',
-            caption='Save Texture List',
-            startingDirectory=file_path,
-            fileMode=0)
-
-        # fill file
-        if csv_path is not None:
-            import csv
-            file_path = csv_path[0]
-            scene_name = cmds.file(query=True, sceneName=True) or 'Scene UNTITLED'
-            with open(file_path, "w") as csv_file:
-                csv_file_writer = csv.writer(csv_file, delimiter=';')
-                csv_file_writer.writerow([scene_name])
-                csv_file_writer.writerow(['NODE NAME', 'NODE TYPE', 'IS REF', 'MISSING', 'INSTANCE COUNT', 'FILE PATH'])
-                csv_file_writer.writerows(file_content)
-                csv_file.close()
-                db_output('CSV file saved to %s' % file_path)
-                cmds.launchImageEditor(viewImageFile=os.path.dirname(file_path))
-
-    @Slot()
-    def on_open_preference_folder(self):
-        """ Open preference folder """
-        folder_path = os.path.dirname(self.settings.fileName())
-        cmds.launchImageEditor(viewImageFile=folder_path)
-
-    @Slot()
-    def on_override_panels(self):
-        """ Override HyperShade and NodeEditor creation callback"""
-        override_info_box = QMessageBox()
-        override_info_box.setWindowTitle(WINDOW_TITLE)
-        override_info_box.setIcon(QMessageBox.Information)
-        override_info_box.setText(
-            'Buttons will be added to HyperShade toolbar and Node Editor toolbar.<br/>'
-            'Changes will exists during this session.'
-        )
-        override_info_box.setInformativeText('<i>Read Help to set this settings permanent</i>')
-        override_info_box.setStandardButtons(QMessageBox.Ok)
-        override_info_box.setDefaultButton(QMessageBox.Ok)
-        override_info_box.exec_()
-
-        mttOverridePanels.override_panels()
-
-    @Slot()
-    def on_settings_about(self):
-        from __init__ import __version__, __author__
-        special_list = [u'Stordeur Beno\xeet', u'Jumel Fran\xe7ois', 'Lorber Jonathan', 'Cretinon Norbert', 'Hoff Gilles']
-        QMessageBox.about(
-            self,
-            WINDOW_TITLE,
-            '<b>Maya Texture Toolkit v%s</b>'
-            u'<p>%s - \xa9 2014'
-            '</p>'
-            '<p>Special thanks to :<br/>'
-            '%s'
-            '</p>' % (__version__, __author__, '<br/>'.join([u'<i>\xa0\xa0%s %s</i>' % (name.partition(' ')[2], name.partition(' ')[0]) for name in sorted(special_list)]))
-        )
-
-    #-------------------------------------------------------------------------------------------------------------------
+    # --------------------------------------------------------------------------
     # TOOLS METHODS
-    def __output_message(self, message, msg_type=None, verbose=False):
-        db_output(message, msg_type=msg_type)
-
-        if get_settings_bool_value(self.settings.value('showHeadsUp', DEFAULT_SHOW_HEADSUP)) and not verbose:
-            cmds.headsUpMessage(message)
-
     @staticmethod
     def __prompt_for_override_file(filename, is_readonly):
         msg = '<b>%s</b> already exists' % filename
@@ -1861,8 +1156,8 @@ class MTTView(QMainWindow):
         elif ret == QMessageBox.No:
             return False
 
-    @staticmethod
-    def __prompt_for_open_readonly_source_file(filename):
+    def __prompt_for_open_readonly_source_file(self, filename):
+        checkout_btn = None
         msg = '<b>%s</b> is a read-only file.' % os.path.basename(filename)
 
         message_box = QMessageBox()
@@ -1870,15 +1165,30 @@ class MTTView(QMainWindow):
         message_box.setIcon(QMessageBox.Question)
         message_box.setText(msg)
         message_box.setInformativeText('Do you want to <b>open</b> this file anyway?')
-        message_box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
-        message_box.setDefaultButton(QMessageBox.Yes)
-        message_box.setEscapeButton(QMessageBox.Cancel)
-        ret = message_box.exec_()
 
-        if ret == QMessageBox.Yes:
+        # create buttons
+        yes_btn = message_box.addButton('Yes', QMessageBox.YesRole)
+        if 'checkout' in MTTSettings.VCS:
+            checkout_btn = message_box.addButton(
+                'Yes && Checkout', QMessageBox.AcceptRole)
+        no_btn = message_box.addButton('No', QMessageBox.DestructiveRole)
+
+        # set default buttons
+        message_box.setDefaultButton(yes_btn)
+        message_box.setEscapeButton(no_btn)
+
+        # show dialog
+        message_box.exec_()
+        pressed_btn = message_box.clickedButton()
+
+        # result
+        if pressed_btn == yes_btn:
             return True
-        elif ret == QMessageBox.No:
+        elif pressed_btn == no_btn:
             return False
+        elif pressed_btn == checkout_btn:
+            self.on_checkout([filename])
+            return True
 
     @staticmethod
     def __prompt_for_rename_without_undo():
@@ -1937,10 +1247,10 @@ class MTTView(QMainWindow):
 
         return result
 
-    @property
     def __get_image_editor_name(self):
         if cmds.optionVar(exists='EditImageDir'):
-            app_name = os.path.splitext(os.path.basename(cmds.optionVar(query='EditImageDir')))[0]
+            app_path = cmds.optionVar(query='EditImageDir')
+            app_name = os.path.splitext(os.path.basename(app_path))[0]
             self.image_editor_name = app_name
             return app_name
 
@@ -1959,9 +1269,6 @@ class MTTView(QMainWindow):
                     return
                 self.viewer_view.is_mtt_sender = False
 
-        if event.modifiers() == Qt.ControlModifier:
-            self.is_master_cmd = True
-
         if event.key() == Qt.Key_F and event.modifiers() == Qt.ControlModifier:
             self.filter_line_edit.setFocus()
         elif event.key() == Qt.Key_R and event.modifiers() == Qt.NoModifier:
@@ -1979,7 +1286,7 @@ class MTTView(QMainWindow):
         elif event.key() == Qt.Key_V and event.modifiers() == Qt.NoModifier:
             self.on_view_files()
         elif event.key() == Qt.Key_V and event.modifiers() == Qt.ControlModifier | Qt.AltModifier:
-            self.on_toolbar_viewer()
+            self.on_toggle_viewer()
         elif event.key() == Qt.Key_E and event.modifiers() == Qt.NoModifier:
             self.on_quick_edit()
         elif event.key() in [Qt.Key_Left, Qt.Key_Up, Qt.Key_Right, Qt.Key_Down]:
@@ -1995,12 +1302,11 @@ class MTTView(QMainWindow):
             if self.viewer_dock.isVisible():
                 self.viewer_view.keyReleaseEvent(event)
 
-        self.is_master_cmd = False
         return super(MTTView, self).keyReleaseEvent(event)
 
     def get_shading_group(self, nodes):
         """ Return ShadingEngine node attach to nodes """
-        shading_groups = list()
+        shading_groups = []
         shading_nodes = cmds.listHistory(nodes, future=True, pruneDagObjects=True)
         if shading_nodes:
             for futureNode in shading_nodes[:]:
@@ -2011,30 +1317,9 @@ class MTTView(QMainWindow):
 
         return shading_groups
 
-    def get_texture_source_folder(self):
-        """ Return texture source folder """
-        key = '<WORKSPACE>'
-        texture_source_folder = TEXTURE_SOURCE_FOLDER
-        if key in TEXTURE_SOURCE_FOLDER:
-            texture_source_folder = TEXTURE_SOURCE_FOLDER.replace(key, cmds.workspace(query=True, rootDirectory=True))
-
-        texture_source_folder = os.path.normpath(texture_source_folder)
-
-        if not os.path.isdir(texture_source_folder):
-            # if default folder not found, try in sourceimages folder
-            if key in TEXTURE_SOURCE_FOLDER:
-                texture_source_folder = TEXTURE_SOURCE_FOLDER.replace(key, self.model.get_sourceimages_path())
-                texture_source_folder = os.path.normpath(texture_source_folder)
-                if not os.path.isdir(texture_source_folder):
-                    # if another location doesn't exists, return workspace root
-                    texture_source_folder = cmds.workspace(query=True, rootDirectory=True)
-                    self.__output_message('You should change "textureSourceFolder" folder in mtt.json file', msg_type='warning')
-
-        return os.path.normpath(texture_source_folder)
-
     def get_selected_table_nodes(self, is_instance_aware=False):
-        nodes = list()
-        nodes_name = list()
+        nodes = []
+        nodes_name = []
         is_already_prompted = False
         collect_instance = False
 
@@ -2075,33 +1360,28 @@ class MTTView(QMainWindow):
 
         return nodes
 
-    def get_filter_completion_words(self):
-        if get_settings_bool_value(self.settings.value('filterRE', DEFAULT_FILTER_RE)):
-            item_str = self.settings.value('filterCompletionRegExp', '')
+    @staticmethod
+    def get_filter_completion_words():
+        if MTTSettings.value('filterRE'):
+            item_str = MTTSettings.value('filterCompletionRegExp')
         else:
-            item_str = self.settings.value('filterCompletionWildcard', '')
+            item_str = MTTSettings.value('filterCompletionWildcard')
 
-        if item_str:
-            return item_str.split(';;')
-        else:
-            return []
+        return item_str.split(';;') if item_str else []
 
     def get_filter_quick_words(self):
         if self.quick_filter_words_init:
             self.quick_filter_words_init = False
-            self.settings.setValue('defaultQuickFilterWords', False)
-            self.settings.setValue('filterQuickWordsRegExp', r'_DIF$;;_NOR$;;_SPE$;;HEAD;;BODY;;^HEAD\w*DIF$;;^HEAD.*NOR')
-            self.settings.setValue('filterQuickWordsWildcard', '_DIF;;_NOR;;_SPE;;HEAD;;BODY;;HEAD*_DIF;;HEAD*_NOR')
+            MTTSettings.set_value('defaultQuickFilterWords', False)
+            MTTSettings.set_value('filterQuickWordsRegExp', r'_DIF$;;_NOR$;;_SPE$;;HEAD;;BODY;;^HEAD\w*DIF$;;^HEAD.*NOR')
+            MTTSettings.set_value('filterQuickWordsWildcard', '_DIF;;_NOR;;_SPE;;HEAD;;BODY;;HEAD*_DIF;;HEAD*_NOR')
 
-        if get_settings_bool_value(self.settings.value('filterRE', DEFAULT_FILTER_RE)):
-            item_str = self.settings.value('filterQuickWordsRegExp', '')
+        if MTTSettings.value('filterRE'):
+            item_str = MTTSettings.value('filterQuickWordsRegExp')
         else:
-            item_str = self.settings.value('filterQuickWordsWildcard', '')
+            item_str = MTTSettings.value('filterQuickWordsWildcard')
 
-        if item_str:
-            return item_str.split(';;')
-        else:
-            return []
+        return item_str.split(';;') if item_str else []
 
     def display_current_texture(self):
         """ Display in viewer the first selected row """
@@ -2120,13 +1400,14 @@ class MTTView(QMainWindow):
                     file_path = self.model.get_node_file_fullpath(current_node_name)
                     self.viewer_view.show_image(file_path)
 
-    def callback_open_scene(self, clientData=None):
+    @staticmethod
+    def callback_open_scene(clientData=None):
         cmds.optionVar(intValue=('suspendCallbacks', True))
 
     def callback_rename_node(self, node, old_name, clientData=None):
         if cmds.optionVar(query='suspendCallbacks') \
                 or not old_name \
-                or self.settings.value('suspendRenameCallbacks', False):
+                or MTTSettings.value('suspendRenameCallbacks'):
             return
         new_node = om.MFnDependencyNode(node)
         if new_node.typeName() in self.supported_format_dict.iterkeys():
@@ -2166,7 +1447,7 @@ class MTTView(QMainWindow):
         if node_msg & om.MNodeMessage.kAttributeSet:
             if attr == self.supported_format_dict[cmds.nodeType(node)]:
                 new_path = cmds.getAttr(plug.name())
-                extra_nodes = list()
+                extra_nodes = []
                 if not self.is_batching_change_attr and not self.model.is_reloading_file:
                     if self.model.get_node_instance_count(node) > 1:
                         if self.__prompt_for_instance_propagation(show_cancel_button=False) == 1:
@@ -2177,9 +1458,9 @@ class MTTView(QMainWindow):
                                     extra_nodes.append(extra_node)
 
                 if self.model.change_node_attribute(node, new_path):
-                    is_auto_rename_activated = get_settings_bool_value(self.settings.value('autoRename', DEFAULT_AUTO_RENAME))
+                    is_auto_rename_activated = MTTSettings.value('autoRename')
                     if is_auto_rename_activated:
-                        self.on_auto_rename_node(node)
+                        self.on_rename_node(node)
 
                     for extra_node in extra_nodes:
                         cmds.optionVar(intValue=('suspendCallbacks', True))
@@ -2187,7 +1468,7 @@ class MTTView(QMainWindow):
                         cmds.setAttr('%s.%s' % (extra_node, node_attr_name), new_path, type="string")
                         if self.model.change_node_attribute(extra_node, new_path):
                             if is_auto_rename_activated:
-                                self.on_auto_rename_node(extra_node)
+                                self.on_rename_node(extra_node)
                     cmds.optionVar(intValue=('suspendCallbacks', False))
 
                     self.model.request_sort()
@@ -2214,7 +1495,7 @@ class MTTView(QMainWindow):
         if cmds.optionVar(query='suspendCallbacks'):
             return
         current_selection = cmds.ls(selection=True, objectsOnly=True)
-        current_shading_group = list()
+        current_shading_group = []
         supported_format = self.supported_format_dict.keys()
 
         if current_selection:
@@ -2228,7 +1509,7 @@ class MTTView(QMainWindow):
                 current_shading_group = cmds.ls(list(set(shading_nodes)), exactType='shadingEngine')
 
             if current_shading_group:
-                nodes = list()
+                nodes = []
                 # parse SG
                 for SG in current_shading_group:
                     shading_nodes = cmds.listHistory(SG, pruneDagObjects=True)
@@ -2258,20 +1539,17 @@ class MTTView(QMainWindow):
 
     def reset_mtt(self, clientData=None):
         cmds.optionVar(stringValue=('filtered_instances', ''))
-        self.pin_btn.setChecked(False)
-        self.settings.remove('pinnedNode')
+        self.status_line_ui.pin_btn.setChecked(False)
+        MTTSettings.remove('pinnedNode')
         self.clear_all_attribute_callbacks()
-        self.model.filewatch_remove_all()
+        self.model.file_watch_remove_all()
         self.model.database_reset()
-        cmds.optionVar(intValue=('suspendCallbacks', DEFAULT_SUSPEND_CALLBACK))
+        suspend_callback_value = DEFAULT_VALUES['suspendCallbacks']
+        cmds.optionVar(intValue=('suspendCallbacks', suspend_callback_value))
         self.apply_attribute_change_callback()
         self.__update_node_file_count_ui()
 
-    @Slot()
-    def fake_def(self):
-        pass
-
-    #-------------------------------------------------------------------------------------------------------------------
+    # --------------------------------------------------------------------------
     # MANAGE CALLBACKS
     def apply_attribute_change_callback(self):
         nodes = self.model.get_all_nodes_name()
@@ -2302,7 +1580,7 @@ class MTTView(QMainWindow):
             self.callback_selection_changed()
         else:
             if self.selection_callback_id is not 0:
-                om.MSceneMessage.removeCallback(self.selection_callback_id)
+                sceneMsg.removeCallback(self.selection_callback_id)
                 self.selection_callback_id = 0
                 self.proxy.selected_texture_nodes = None
                 self.model.request_sort()
@@ -2310,48 +1588,54 @@ class MTTView(QMainWindow):
 
     def __create_callbacks(self):
         """ Create callbacks """
-        self.is_callbacks_created = True
-        self.new_callback_id = om.MSceneMessage.addCallback(om.MSceneMessage.kAfterNew, self.reset_mtt)
+        def add_callback(cb_type, func):
+            self.scene_callbacks_ids.append(
+                sceneMsg.addCallback(cb_type, func)
+            )
 
-        self.scene_callbacks_ids.append(om.MSceneMessage.addCallback(om.MSceneMessage.kBeforeOpen, self.callback_open_scene))
-        self.scene_callbacks_ids.append(om.MSceneMessage.addCallback(om.MSceneMessage.kAfterOpen, self.reset_mtt))
-        self.scene_callbacks_ids.append(om.MSceneMessage.addCallback(om.MSceneMessage.kBeforeImport, self.callback_open_scene))
-        self.scene_callbacks_ids.append(om.MSceneMessage.addCallback(om.MSceneMessage.kAfterImport, self.reset_mtt))
-        self.scene_callbacks_ids.append(om.MSceneMessage.addCallback(om.MSceneMessage.kBeforeImport, self.callback_open_scene))
-        self.scene_callbacks_ids.append(om.MSceneMessage.addCallback(om.MSceneMessage.kAfterImport, self.reset_mtt))
-        self.scene_callbacks_ids.append(om.MSceneMessage.addCallback(om.MSceneMessage.kBeforeRemoveReference, self.callback_open_scene))
-        self.scene_callbacks_ids.append(om.MSceneMessage.addCallback(om.MSceneMessage.kAfterRemoveReference, self.reset_mtt))
-        self.scene_callbacks_ids.append(om.MSceneMessage.addCallback(om.MSceneMessage.kBeforeImportReference, self.callback_open_scene))
-        self.scene_callbacks_ids.append(om.MSceneMessage.addCallback(om.MSceneMessage.kAfterImportReference, self.reset_mtt))
-        self.scene_callbacks_ids.append(om.MSceneMessage.addCallback(om.MSceneMessage.kBeforeUnloadReference, self.callback_open_scene))
-        self.scene_callbacks_ids.append(om.MSceneMessage.addCallback(om.MSceneMessage.kAfterUnloadReference, self.reset_mtt))
-        self.scene_callbacks_ids.append(om.MSceneMessage.addCallback(om.MSceneMessage.kBeforeLoadReference, self.callback_open_scene))
-        self.scene_callbacks_ids.append(om.MSceneMessage.addCallback(om.MSceneMessage.kAfterLoadReference, self.reset_mtt))
-        self.scene_callbacks_ids.append(om.MSceneMessage.addCallback(om.MSceneMessage.kBeforeCreateReference, self.callback_open_scene))
-        self.scene_callbacks_ids.append(om.MSceneMessage.addCallback(om.MSceneMessage.kAfterCreateReference, self.reset_mtt))
+        self.is_callbacks_created = True
+        self.new_callback_id = sceneMsg.addCallback(sceneMsg.kAfterNew, self.reset_mtt)
+
+        add_callback(sceneMsg.kBeforeOpen, self.callback_open_scene)
+        add_callback(sceneMsg.kAfterOpen, self.reset_mtt)
+        add_callback(sceneMsg.kBeforeImport, self.callback_open_scene)
+        add_callback(sceneMsg.kAfterImport, self.reset_mtt)
+        add_callback(sceneMsg.kBeforeImport, self.callback_open_scene)
+        add_callback(sceneMsg.kAfterImport, self.reset_mtt)
+        add_callback(sceneMsg.kBeforeRemoveReference, self.callback_open_scene)
+        add_callback(sceneMsg.kAfterRemoveReference, self.reset_mtt)
+        add_callback(sceneMsg.kBeforeImportReference, self.callback_open_scene)
+        add_callback(sceneMsg.kAfterImportReference, self.reset_mtt)
+        add_callback(sceneMsg.kBeforeUnloadReference, self.callback_open_scene)
+        add_callback(sceneMsg.kAfterUnloadReference, self.reset_mtt)
+        add_callback(sceneMsg.kBeforeLoadReference, self.callback_open_scene)
+        add_callback(sceneMsg.kAfterLoadReference, self.reset_mtt)
+        add_callback(sceneMsg.kBeforeCreateReference, self.callback_open_scene)
+        add_callback(sceneMsg.kAfterCreateReference, self.reset_mtt)
 
         self.rename_node_callback_id = om.MNodeMessage.addNameChangedCallback(om.MObject(), self.callback_rename_node)
         self.add_node_callback_id = om.MDGMessage.addNodeAddedCallback(self.callback_add_node)
         self.remove_node_callback_id = om.MDGMessage.addNodeRemovedCallback(self.callback_remove_node)
 
         self.apply_attribute_change_callback()
-        self.update_selection_change_callback_state(get_settings_bool_value(self.settings.value('onlySelectionState', DEFAULT_ONLY_SELECTION)))
+        self.update_selection_change_callback_state(MTTSettings.value('onlySelectionState'))
 
     def __remove_callbacks(self):
         """ Remove callbacks """
         if not self.is_callbacks_created:
             return
-        om.MSceneMessage.removeCallback(self.new_callback_id)
+
+        sceneMsg.removeCallback(self.new_callback_id)
         for callbackID in self.scene_callbacks_ids:
-            om.MSceneMessage.removeCallback(callbackID)
-        om.MSceneMessage.removeCallback(self.rename_node_callback_id)
-        om.MSceneMessage.removeCallback(self.add_node_callback_id)
-        om.MSceneMessage.removeCallback(self.remove_node_callback_id)
+            sceneMsg.removeCallback(callbackID)
+        sceneMsg.removeCallback(self.rename_node_callback_id)
+        sceneMsg.removeCallback(self.add_node_callback_id)
+        sceneMsg.removeCallback(self.remove_node_callback_id)
         self.clear_all_attribute_callbacks()
         self.update_selection_change_callback_state(False)
 
     def __remove_filewatch(self):
-        self.model.filewatch_remove_all()
+        self.model.file_watch_remove_all()
 
     #-------------------------------------------------------------------------------------------------------------------
     # CLEAN EXIT
@@ -2367,47 +1651,33 @@ class MTTView(QMainWindow):
             delta_x = central_geometry.x() - dock_geometry.x()
             delta_y = central_geometry.y() - dock_geometry.y()
             if delta_x > 0 and delta_y == 0:
-                self.settings.setValue('Viewer/side', 'Left')
+                MTTSettings.set_value('Viewer/side', 'Left')
             elif delta_x == 0 and delta_y > 0:
-                self.settings.setValue('Viewer/side', 'Top')
+                MTTSettings.set_value('Viewer/side', 'Top')
             elif delta_x < 0 and delta_y == 0:
-                self.settings.setValue('Viewer/side', 'Right')
+                MTTSettings.set_value('Viewer/side', 'Right')
             elif delta_x == 0 and delta_y < 0:
-                self.settings.setValue('Viewer/side', 'Bottom')
+                MTTSettings.set_value('Viewer/side', 'Bottom')
 
-        self.settings.setValue('Viewer/isFloating', is_floating)
-        self.settings.setValue('Viewer/dockGeometry', dock_geometry)
+        MTTSettings.set_value('Viewer/isFloating', is_floating)
+        MTTSettings.set_value('Viewer/dockGeometry', dock_geometry)
 
     def __save_settings(self):
         """ Save settings to QSettings """
         if self.table_view is None:
             return
 
-        self.settings.setValue('windowGeometry', self.saveGeometry())
-        self.settings.setValue('centralGeometry', self.centralWidget().geometry())
-        self.settings.setValue('columnsSize', self.table_view.horizontalHeader().saveState())
+        MTTSettings.set_value('windowGeometry', self.saveGeometry())
+        MTTSettings.set_value('centralGeometry', self.centralWidget().geometry())
+        MTTSettings.set_value('columnsSize', self.table_view.horizontalHeader().saveState())
 
-        self.settings.setValue('filterRE', self.filter_re_btn.isChecked())
-        self.settings.setValue('filterType', self.filter_combo.currentIndex())
+        MTTSettings.set_value('filterRE', self.filter_re_btn.isChecked())
+        MTTSettings.set_value('filterType', self.filter_combo.currentIndex())
 
-        self.settings.setValue('onlySelectionState', self.selection_btn.isChecked())
-        self.settings.setValue('onlyWritableState', self.writable_btn.isChecked())
-        self.settings.setValue('showReferenceState', self.reference_btn.isChecked())
-        self.settings.setValue('showWrongNameState', self.wrong_name_btn.isChecked())
-        self.settings.remove('pinnedNode')
-        self.settings.setValue('vizWrongNameState', self.wrong_name_visibility_btn.isChecked())
-        self.settings.setValue('showBasenameState', self.basename_visibility_btn.isChecked())
-        self.settings.setValue('filterInstances', self.filter_instances_btn.isChecked())
-
-        self.settings.setValue('filterGroup', self.filter_grp.current_state())
-        self.settings.setValue('visibilityGroup', self.visibility_grp.current_state())
-        self.settings.setValue('folderGroup', self.folder_grp.current_state())
-        self.settings.setValue('autoGroup', self.auto_grp.current_state())
-        self.settings.setValue('toolGroup', self.tool_grp.current_state())
-        self.settings.setValue('mayaGroup', self.maya_grp.current_state())
+        self.status_line_ui.save_states()
 
         # remove temp variable
-        self.settings.remove('browserFirstStart')
+        MTTSettings.remove('browserFirstStart')
 
     def closeEvent(self, event):
         """ closeEvent override to save preferences and close callbacks """
@@ -2432,3 +1702,21 @@ class MTTView(QMainWindow):
         self.deleteLater()
 
         event.accept()
+
+
+def show_ui(toggle=True):
+    """ INIT TOOL AND SHOW UI
+
+    @param toggle: destroy and recreate window when is set to False
+    """
+    # delete UI if exists
+    if cmds.control(WINDOW_NAME, exists=True):
+        cmds.deleteUI(WINDOW_NAME, window=True)
+
+        if toggle:
+            return
+
+    check_editor_preferences()
+
+    dialog = MTTView(parent=get_maya_window())
+    dialog.show()

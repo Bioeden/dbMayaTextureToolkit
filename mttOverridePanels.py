@@ -14,6 +14,9 @@ from mttFilterFileDialog import create_nodes
 MTT_ICONS_NAME = ['MTT_CreateNode.png']
 ICON_SIZE = 26
 
+VAR_HS_CMD = 'MTT_hs_panel_custom_cmd'
+VAR_NE_CMD = 'MTT_ne_panel_custom_cmd'
+
 
 def hypershade_add_node(panel):
     mel.eval('hyperShadePanelGraphCommand("%s", "addSelected")' % panel)
@@ -25,8 +28,8 @@ def hypershade_remove_node(panel):
 
 def override_add_hypershade_panel(panel):
     # create HyperShade with Maya command
-    if cmds.optionVar(exists='MTT_hs_panel_custom_cmd'):
-        mel.eval('%s("%s")' % (cmds.optionVar(query='MTT_hs_panel_custom_cmd'), panel))
+    if cmds.optionVar(exists=VAR_HS_CMD):
+        mel.eval('%s("%s")' % (cmds.optionVar(query=VAR_HS_CMD), panel))
     else:
         mel.eval('addHyperShadePanel("%s")' % panel)
 
@@ -62,8 +65,8 @@ def override_add_hypershade_panel(panel):
 
 def override_add_node_editor_panel(panel):
     # create Node Editor with Maya command
-    if cmds.optionVar(exists='MTT_ne_panel_custom_cmd'):
-        mel.eval('%s("%s")' % (cmds.optionVar(query='MTT_ne_panel_custom_cmd'), panel))
+    if cmds.optionVar(exists=VAR_NE_CMD):
+        mel.eval('%s("%s")' % (cmds.optionVar(query=VAR_NE_CMD), panel))
     else:
         mel.eval('nodeEdAddCallback("%s")' % panel)
 
@@ -97,17 +100,24 @@ def override_panels(custom_hs_cmd=None, custom_ne_cmd=None):
             shutil.copy2(source_file, destination_file)
 
     # create MEL global proc
-    cmd = mel.createMelWrapper(override_add_hypershade_panel, types=['string'], returnCmd=True)
+    cmd = mel.createMelWrapper(
+        override_add_hypershade_panel, types=['string'], returnCmd=True)
     mel.eval(cmd)
-    cmd = mel.createMelWrapper(override_add_node_editor_panel, types=['string'], returnCmd=True)
+    cmd = mel.createMelWrapper(
+        override_add_node_editor_panel, types=['string'], returnCmd=True)
     mel.eval(cmd)
 
     # edit callback of scripted panel
-    cmds.scriptedPanelType('hyperShadePanel', edit=True, addCallback='override_add_hypershade_panel')
-    cmds.scriptedPanelType('nodeEditorPanel', edit=True, addCallback='override_add_node_editor_panel')
+    cmds.scriptedPanelType(
+        'hyperShadePanel', edit=True,
+        addCallback='override_add_hypershade_panel')
+
+    cmds.scriptedPanelType(
+        'nodeEditorPanel', edit=True,
+        addCallback='override_add_node_editor_panel')
 
     # store custom cmd
     if custom_hs_cmd:
-        cmds.optionVar(sv=['MTT_hs_panel_custom_cmd', custom_hs_cmd])
+        cmds.optionVar(sv=[VAR_HS_CMD, custom_hs_cmd])
     if custom_ne_cmd:
-        cmds.optionVar(sv=['MTT_ne_panel_custom_cmd', custom_hs_cmd])
+        cmds.optionVar(sv=[VAR_NE_CMD, custom_hs_cmd])

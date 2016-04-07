@@ -1,20 +1,18 @@
-# Maya import
-import maya.api.OpenMaya as om
-
-# Qt import
-from PySide.QtGui import *
-from PySide.QtCore import *
-from PySide.QtOpenGL import *
-from shiboken import wrapInstance
-
 # Python import
+import os
 import math
 import ctypes
 from functools import partial
-
+# Qt import
+from PySide.QtCore import *
+from PySide.QtGui import *
+# Maya import
+from maya import cmds
+from maya import OpenMaya as om
 # custom import
-import mttResources
-from mttConfig import *
+from mttConfig import MTTSettings, VIEWER_NAME, VIEWER_TITLE, WINDOW_ICON
+from mttCmd import mtt_log
+from mttCmdUi import get_maya_window
 from mttCustomWidget import StatusToolbarButton
 
 
@@ -134,12 +132,6 @@ class MTTItem(QGraphicsPixmapItem):
         self.comp_split_pos = -1
         self.compare_texture = QPixmap(8, 8)
 
-        # show black and white image
-        self.effect = QGraphicsColorizeEffect()
-        self.effect.setColor(QColor(0, 0, 0, 255))
-        self.effect.setStrength(0)
-        self.setGraphicsEffect(self.effect)
-
     def draw_splitted_image(self, p):
         if self.comp_split_pos >= 0:
             p.setClipRect(QRectF(0, 0, self.comp_split_pos, self.texture_height))
@@ -204,13 +196,12 @@ class MTTItem(QGraphicsPixmapItem):
 
 
 class MTTGraphicsView(QGraphicsView):
-    def __init__(self, parent=None, settings=None):
+    def __init__(self, parent=None):
         super(MTTGraphicsView, self).__init__(parent)
 
         # init some variables
         self.supported_image_ext = QImageReader.supportedImageFormats()
         self.scene = QGraphicsScene()
-        self.settings = settings
         self.default_texture = QPixmap(':/viewer_empty')
 
         # create background pattern
@@ -244,12 +235,12 @@ class MTTGraphicsView(QGraphicsView):
         self.__init_ui()
 
     def __init_ui(self):
-        # self.setResizeAnchor(QGraphicsView.AnchorUnderMouse)
-        # self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.setDragMode(QGraphicsView.NoDrag)
         self.setScene(self.scene)
+
+        # TODO : found a way to linearized color when showing R or G or B
 
     def __add_texture_item(self, default_texture_state):
         # clear the scene
@@ -263,16 +254,15 @@ class MTTGraphicsView(QGraphicsView):
         if self.compare_mode:
             self.current_item.comp_split_pos = self.compare_split_pos
         self.scene.addItem(self.current_item)
-        # self.current_item.setOffset(QPointF(self.current_texture.width(), self.current_texture.height()))
 
         # show image
         self.centerOn(self.current_texture.width() * 0.5, self.current_texture.height() * 0.5)
         self.centerOn(self.current_texture.width(), self.current_texture.height())
         self.is_default_texture = default_texture_state
         if not default_texture_state:
-            if bool(self.settings.value('Viewer/autoFit', DEFAULT_VIEWER_AUTO_FIT)):
+            if MTTSettings.value('Viewer/autoFit'):
                 self.fit_texture()
-            elif bool(self.settings.value('Viewer/autoReset', DEFAULT_VIEWER_AUTO_RESET)):
+            elif MTTSettings.value('Viewer/autoReset'):
                 self.reset_texture_transform()
             self.setBackgroundBrush(QBrush(self.alpha_background))
             self.change_draw_style(self.current_style)
@@ -316,8 +306,9 @@ class MTTGraphicsView(QGraphicsView):
         texture_size = width_value * height_value * 4
 
         # convert to Qt format
-        image_format = QImage.Format_ARGB32_Premultiplied if get_settings_bool_value(
-            self.settings.value('Viewer/premultiply', DEFAULT_VIEWER_PREMULTIPLY)) else QImage.Format_RGB32
+        image_format = QImage.Format_ARGB32_Premultiplied \
+            if MTTSettings.value('Viewer/premultiply') \
+            else QImage.Format_RGB32
 
         show_default = False
         qt_image = None
@@ -328,12 +319,12 @@ class MTTGraphicsView(QGraphicsView):
             qt_image = QImage(self.image_buffer, width_value, height_value, image_format).rgbSwapped()
 
             self.is_loading_fail = False
-            db_output('%s loaded' % os.path.basename(texture_path), add_tag='VIEWER')
+            mtt_log('%s loaded' % os.path.basename(texture_path), add_tag='VIEWER')
         except Exception as e:
-            db_output('%s\n%s' % (type(e), e), add_tag='VIEWER', msg_type='error')
-            db_output('Fail to load %s' % os.path.basename(texture_path), add_tag='VIEWER', msg_type='error')
+            mtt_log('%s\n%s' % (type(e), e), add_tag='VIEWER', msg_type='error')
+            mtt_log('Fail to load %s' % os.path.basename(texture_path), add_tag='VIEWER', msg_type='error')
             self.is_loading_fail = True
-            if get_settings_bool_value(self.settings.value('Viewer/recoverMode', DEFAULT_VIEWER_RECOVERY)):
+            if MTTSettings.value('Viewer/recoverMode'):
                 try:
                     import time
 
@@ -350,15 +341,15 @@ class MTTGraphicsView(QGraphicsView):
                             a = om.MScriptUtil.getUcharArrayItem(pixel_ptr, i + 3)
                             qt_image.setPixel(x, y, QColor(r, g, b, a).rgba())
                     end = time.clock()
-                    db_output('Image read in %.3fs' % (end - start))
+                    mtt_log('Image read in %.3fs' % (end - start))
                 except Exception as e:
-                    db_output(e, add_tag='VIEWER', msg_type='error')
+                    mtt_log(e, add_tag='VIEWER', msg_type='error')
                     show_default = True
             else:
                 show_default = True
         except RuntimeError as e:
-            db_output('%s\n%s' % (type(e), e), add_tag='VIEWER', msg_type='error')
-            db_output('Fail to load %s' % os.path.basename(texture_path), add_tag='VIEWER', msg_type='error')
+            mtt_log('%s\n%s' % (type(e), e), add_tag='VIEWER', msg_type='error')
+            mtt_log('Fail to load %s' % os.path.basename(texture_path), add_tag='VIEWER', msg_type='error')
             self.is_loading_fail = True
             show_default = True
 
@@ -417,8 +408,7 @@ class MTTGraphicsView(QGraphicsView):
 
     def update_split_pos(self, event):
         mouse_texture_pos = self.mapToScene(event.pos())
-        self.compare_split_pos = self.current_item.comp_split_pos = max(0, min(mouse_texture_pos.x(),
-                                                                                                                                                     self.current_item.boundingRect().width()))
+        self.compare_split_pos = self.current_item.comp_split_pos = max(0, min(mouse_texture_pos.x(), self.current_item.boundingRect().width()))
         self.current_item.update()
 
     def drawBackground(self, p, rect):
@@ -597,7 +587,7 @@ class MTTGraphicsView(QGraphicsView):
 
 
 class MTTViewer(QMainWindow):
-    def __init__(self, parent=MAYA_MAIN_WINDOW, settings=SETTINGS):
+    def __init__(self, parent=get_maya_window()):
         super(MTTViewer, self).__init__(parent)
 
         if cmds.control(VIEWER_NAME, exists=True):
@@ -606,12 +596,11 @@ class MTTViewer(QMainWindow):
         self.parent = parent
         self.setObjectName(VIEWER_NAME)
         self.setWindowTitle(VIEWER_TITLE)
+        self.setWindowIcon(QIcon(WINDOW_ICON))
 
         self.texture_path = None
         self.texture_compare_path = None
         self.is_mtt_sender = False
-
-        self.settings = settings
 
         # UI variables
         self.viewer_statusbar = None
@@ -629,9 +618,7 @@ class MTTViewer(QMainWindow):
         # self.setMouseTracking(True)
 
         # restore geometry
-        window_geo = self.settings.value('Viewer/windowGeometry')
-        if window_geo:
-            self.restoreGeometry(window_geo)
+        self.restoreGeometry(MTTSettings.value('Viewer/windowGeometry'))
 
     @staticmethod
     def __create_toolbar_button(btn_icon, btn_text, btn_cmd, btn_checkable):
@@ -744,7 +731,7 @@ class MTTViewer(QMainWindow):
         main_layout.setContentsMargins(2, 2, 2, 2)
 
         self.viewer_statusbar = self.statusBar()
-        self.graphics_view = MTTGraphicsView(settings=self.settings)
+        self.graphics_view = MTTGraphicsView()
         self.graphics_view.update_status = self.update_status
         self.graphics_view.reset_image()
 
@@ -763,8 +750,7 @@ class MTTViewer(QMainWindow):
 
         premultiply_menu = QAction('Premultiply Alpha', self)
         premultiply_menu.setCheckable(True)
-        premultiply_menu.setChecked(
-            get_settings_bool_value(self.settings.value('Viewer/premultiply', DEFAULT_VIEWER_PREMULTIPLY)))
+        premultiply_menu.setChecked(MTTSettings.value('Viewer/premultiply'))
         premultiply_menu.triggered.connect(self.toggle_premultiply)
         settings_menu.addAction(premultiply_menu)
 
@@ -772,8 +758,7 @@ class MTTViewer(QMainWindow):
         recover_action.setToolTip('Reconstruct image iterating over all pixels when loading fail (Very SLOW)')
         recover_action.setStatusTip('Reconstruct image iterating over all pixels when loading fail (Very SLOW)')
         recover_action.setCheckable(True)
-        recover_action.setChecked(
-            get_settings_bool_value(self.settings.value('Viewer/recoverMode', DEFAULT_VIEWER_RECOVERY)))
+        recover_action.setChecked(MTTSettings.value('Viewer/recoverMode'))
         recover_action.triggered.connect(self.toggle_recover_mode)
         settings_menu.addAction(recover_action)
 
@@ -787,19 +772,19 @@ class MTTViewer(QMainWindow):
 
         fit_action = QAction('Fit Image', zoom_group)
         fit_action.setCheckable(True)
-        fit_action.setChecked(get_settings_bool_value(self.settings.value('Viewer/autoFit', DEFAULT_VIEWER_AUTO_FIT)))
+        fit_action.setChecked(MTTSettings.value('Viewer/autoFit'))
         fit_action.triggered.connect(self.auto_fit)
         settings_menu.addAction(fit_action)
 
         lock_action = QAction('Lock Zoom', zoom_group)
         lock_action.setCheckable(True)
-        lock_action.setChecked(get_settings_bool_value(self.settings.value('Viewer/autoLock', DEFAULT_VIEWER_AUTO_LOCK)))
+        lock_action.setChecked(MTTSettings.value('Viewer/autoLock'))
         lock_action.triggered.connect(self.auto_lock_zoom)
         settings_menu.addAction(lock_action)
 
         reset_action = QAction('Reset Zoom', zoom_group)
         reset_action.setCheckable(True)
-        reset_action.setChecked(get_settings_bool_value(self.settings.value('Viewer/autoReset', DEFAULT_VIEWER_AUTO_RESET)))
+        reset_action.setChecked(MTTSettings.value('Viewer/autoReset'))
         reset_action.triggered.connect(self.auto_reset_zoom)
         settings_menu.addAction(reset_action)
 
@@ -812,29 +797,33 @@ class MTTViewer(QMainWindow):
             self.graphics_view.change_draw_style(channel_type)
 
     def toggle_premultiply(self):
-        state = not get_settings_bool_value(self.settings.value('Viewer/premultiply', DEFAULT_VIEWER_PREMULTIPLY))
-        self.settings.setValue('Viewer/premultiply', state)
+        state = not MTTSettings.value('Viewer/premultiply')
+        MTTSettings.set_value('Viewer/premultiply', state)
         if self.texture_path:
             self.show_image(self.texture_path)
 
-    def toggle_recover_mode(self):
-        state = not get_settings_bool_value(self.settings.value('Viewer/recoverMode', DEFAULT_VIEWER_RECOVERY))
-        self.settings.setValue('Viewer/recoverMode', state)
+    @staticmethod
+    def toggle_recover_mode():
+        state = not MTTSettings.value('Viewer/recoverMode')
+        MTTSettings.set_value('Viewer/recoverMode', state)
 
-    def auto_fit(self):
-        self.settings.setValue('Viewer/autoFit', True)
-        self.settings.setValue('Viewer/autoLock', False)
-        self.settings.setValue('Viewer/autoReset', False)
+    @staticmethod
+    def auto_fit():
+        MTTSettings.set_value('Viewer/autoFit', True)
+        MTTSettings.set_value('Viewer/autoLock', False)
+        MTTSettings.set_value('Viewer/autoReset', False)
 
-    def auto_lock_zoom(self):
-        self.settings.setValue('Viewer/autoFit', False)
-        self.settings.setValue('Viewer/autoLock', True)
-        self.settings.setValue('Viewer/autoReset', False)
+    @staticmethod
+    def auto_lock_zoom():
+        MTTSettings.set_value('Viewer/autoFit', False)
+        MTTSettings.set_value('Viewer/autoLock', True)
+        MTTSettings.set_value('Viewer/autoReset', False)
 
-    def auto_reset_zoom(self):
-        self.settings.setValue('Viewer/autoFit', False)
-        self.settings.setValue('Viewer/autoLock', False)
-        self.settings.setValue('Viewer/autoReset', True)
+    @staticmethod
+    def auto_reset_zoom():
+        MTTSettings.set_value('Viewer/autoFit', False)
+        MTTSettings.set_value('Viewer/autoLock', False)
+        MTTSettings.set_value('Viewer/autoReset', True)
 
     def show_image(self, texture_path):
         if os.path.isfile(texture_path):
@@ -846,7 +835,7 @@ class MTTViewer(QMainWindow):
             QApplication.restoreOverrideCursor()
         else:
             self.texture_path = None
-            db_output('File not found.', add_tag='VIEWER', msg_type='warning')
+            mtt_log('File not found.', add_tag='VIEWER', msg_type='warning')
             self.graphics_view.is_loading_fail = True
             self.graphics_view.reset_image()
 
@@ -875,7 +864,7 @@ class MTTViewer(QMainWindow):
 
         if self.graphics_view.is_loading_fail and not self.graphics_view.is_default_texture:
             msg = 'Failed to load image ! '
-            if get_settings_bool_value(self.settings.value('Viewer/recoverMode', DEFAULT_VIEWER_RECOVERY)):
+            if MTTSettings.value('Viewer/recoverMode'):
                 msg += '::: IMAGE RECONSTRUCTED :::'
                 current_color = QColor(Qt.darkRed).name()
 
@@ -888,7 +877,7 @@ class MTTViewer(QMainWindow):
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key_V and event.modifiers() == Qt.ControlModifier | Qt.AltModifier and not self.is_mtt_sender:
-            self.settings.setValue('viewerState', False)
+            MTTSettings.set_value('viewerState', False)
             # get main tool window and disconnect signal
             main_window = self.parentWidget().parentWidget().parentWidget()
             main_window.table_view_selection_model.selectionChanged.disconnect(main_window.on_auto_show_texture)

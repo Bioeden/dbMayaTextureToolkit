@@ -1,15 +1,16 @@
 # Qt import
-from PySide.QtGui import *
-from PySide.QtCore import *
-
+from PySide.QtGui import (
+    QMessageBox, QHBoxLayout, QWidget, QPushButton, QComboBox,
+    QPixmap, QPainter, QCursor
+)
+from PySide.QtCore import Signal, Qt
 # custom import
-from mttConfig import *
+from mttConfig import TOOLBAR_BUTTON_SIZE
 
 
 class RightPushButton(QPushButton):
-    """
-    Push Button with Right click signal
-    """
+    """ Push Button with Right click signal """
+
     rightClick = Signal()
     is_right_press = False
 
@@ -46,9 +47,8 @@ class RightPushButton(QPushButton):
 
 
 class StatusToolbarButton(QPushButton):
-    """
-    Button with same Maya Status Line behavior
-    """
+    """ Button with same Maya Status Line behavior """
+
     def __init__(self, pix_ico, parent=None):
         super(StatusToolbarButton, self).__init__(parent)
 
@@ -72,14 +72,16 @@ class StatusToolbarButton(QPushButton):
 
 
 class SeparatorButton(QPushButton):
-    """
-    Separator button Maya Status Line's style
-    """
+    """ Separator button with Maya Status Line's style """
+
     def __init__(self, parent=None):
         super(SeparatorButton, self).__init__(parent)
 
+        self.pix = (QPixmap(':/ShortCloseBar.png'),
+                    QPixmap(':/ShortOpenBar.png'))
+
         self.is_collapsed = False
-        self.icon = QPixmap(':/ShortOpenBar.png')
+        self.icon = self.pix[1]
         self.setFlat(True)
         self.setFixedSize(10, 20)
 
@@ -95,19 +97,18 @@ class SeparatorButton(QPushButton):
         painter.setCompositionMode(compo_mode)
         painter.drawPixmap(2, 1, self.icon)
 
-    def setCollapse(self, state):
-        self.icon = (QPixmap(':/ShortOpenBar.png') if state else QPixmap(':/ShortCloseBar.png'))
+    def set_collapse(self, state):
+        self.icon = self.pix[state]
 
 
 class StatusCollapsibleLayout(QWidget):
-    """
-    Collapsible layout Maya Status Line's style
-    """
+    """ Collapsible layout with Maya Status Line's style """
+
     def __init__(self, parent=None, section_name=None):
         super(StatusCollapsibleLayout, self).__init__(parent)
 
-        self.__iconButtons = []
-        self.__currentState = 1
+        self.icon_buttons = []
+        self.state = True
 
         self.toggle_btn = SeparatorButton()
         # self.toggle_btn.setIconSize(QSize(10, 17))
@@ -125,38 +126,38 @@ class StatusCollapsibleLayout(QWidget):
 
         self.setLayout(self.group_layout)
 
-    def add_button(self, button=None):
-        """ Create a button and add it to the layout """
-        if button is not None:
-            self.__iconButtons.append(button)
-            self.group_layout.addWidget(button)
+    def add_button(self, button):
+        """ Create a button and add it to the layout
+
+        :param button: QPushButton
+        """
+        self.icon_buttons.append(button)
+        self.group_layout.addWidget(button)
 
     def toggle_layout(self):
         """ Toggle collapse action for layout """
-        if self.__currentState:
-            self.__currentState = 0
-            for btn in self.__iconButtons:
-                btn.hide()
-        else:
-            self.__currentState = 1
-            for btn in self.__iconButtons:
-                btn.show()
-        self.toggle_btn.setCollapse(self.__currentState)
+        self.state = not self.state
+
+        for btn in self.icon_buttons:
+            btn.setVisible(self.state)
+
+        self.toggle_btn.set_collapse(self.state)
 
     def set_current_state(self, state):
         if isinstance(state, unicode):
-            state = int(state)
-        self.__currentState = [1, 0][state]
+            state = state == 'true'
+
+        self.state = not state
         self.toggle_layout()
 
     def button_count(self):
-        return len(self.__iconButtons)
+        return len(self.icon_buttons)
 
     def button_list(self):
-        return self.__iconButtons
+        return self.icon_buttons
 
     def current_state(self):
-        return self.__currentState
+        return self.state
 
 
 class MessageBoxWithCheckbox(QMessageBox):
@@ -164,8 +165,8 @@ class MessageBoxWithCheckbox(QMessageBox):
         super(MessageBoxWithCheckbox, self).__init__(parent)
 
         self.instance_state_widget = QComboBox()
-        current_layout = self.layout()
-        current_layout.addWidget(self.instance_state_widget, 1, 1)
+        self.layout().addWidget(self.instance_state_widget, 1, 1)
 
     def exec_(self, *args, **kwargs):
-        return QMessageBox.exec_(self, *args, **kwargs), self.instance_state_widget.currentIndex()
+        return QMessageBox.exec_(self, *args, **kwargs), \
+               self.instance_state_widget.currentIndex()

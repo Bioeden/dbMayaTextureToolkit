@@ -1,24 +1,18 @@
-# Maya import
-import maya.OpenMayaUI as omui
-import maya.OpenMaya as om
-import maya.cmds as cmds
-
-# Qt import
-from PySide.QtGui import QMainWindow
-from PySide.QtCore import QSettings
-from shiboken import wrapInstance
-
 # Python import
-import os
 import json
+import os
+# PySide import
+from PySide.QtCore import QSettings
+# Maya import
+from maya import cmds
 
 
-# -------------------------------------------------------------------------------------------------------------------- #
-# Statics variables
-# -------------------------------------------------------------------------------------------------------------------- #
 WINDOW_DOCK_NAME = 'dbMayaTextureToolkitDock'
+WINDOW_TITLE = 'Maya Texture Toolkit v{:.02f}'.format(
+    cmds.optionVar(query='MTT_version'))
 WINDOW_NAME = 'dbMayaTextureToolkitWin'
-WINDOW_TITLE = 'db Maya Texture Toolkit %s' % cmds.optionVar(query='MTT_version')
+# TODO : create a custom icon
+WINDOW_ICON = ':/dimTexture.png'
 VIEWER_DOCK_NAME = 'dbMayaTextureToolkitViewerDock'
 VIEWER_NAME = 'dbMayaTextureToolkitViewer'
 VIEWER_TITLE = 'MTT Viewer'
@@ -26,7 +20,8 @@ CREATE_NODE_TITLE = 'MTT Create Node'
 TAG = 'MTT'
 
 COLUMN_COUNT = 6
-NODE_NAME, NODE_TYPE, NODE_REFERENCE, FILE_STATE, FILE_COUNT, NODE_FILE = range(COLUMN_COUNT)
+NODE_NAME, NODE_TYPE, NODE_REFERENCE, FILE_STATE, FILE_COUNT, NODE_FILE = range(
+    COLUMN_COUNT)
 VIEW_COLUMN_LABEL = {
     NODE_NAME: 'Node Name',
     NODE_TYPE: 'Type',
@@ -60,7 +55,8 @@ DB_COLUMN_LABEL = {
     NODE_FILE: 'Attribute'
 }
 
-PROMPT_INSTANCE_ASK, PROMPT_INSTANCE_WAIT, PROMPT_INSTANCE_SESSION, PROMPT_INSTANCE_ALWAYS = range(4)
+(PROMPT_INSTANCE_ASK, PROMPT_INSTANCE_WAIT, PROMPT_INSTANCE_SESSION,
+    PROMPT_INSTANCE_ALWAYS) = range(4)
 PROMPT_INSTANCE_WAIT_DURATION = 30
 PROMPT_INSTANCE_STATE = {
     PROMPT_INSTANCE_ASK: 'Ask every time',
@@ -72,210 +68,227 @@ PROMPT_INSTANCE_STATE = {
 TOOLBAR_BUTTON_SIZE = 20
 TOOLBAR_BUTTON_ICON_SIZE = 16
 
-DEFAULT_VIZ_WRONG_NAME = False
-DEFAULT_SHOW_WRONG_NAME = False
-DEFAULT_SHOW_BASENAME = False
-DEFAULT_SHOW_REAL_ATTRIBUTE = False
-DEFAULT_SHOW_REFERENCE = False
-DEFAULT_SHOW_HEADSUP = True
-DEFAULT_SHOW_NAMESPACE = True
-DEFAULT_FILTER_INSTANCES = False
-DEFAULT_FORCE_RELATIVE_PATH = True
-DEFAULT_BROWSER_FIRST_START = False
-DEFAULT_AUTO_SELECT = False
-DEFAULT_AUTO_RELOAD = False
-DEFAULT_AUTO_RENAME = False
-DEFAULT_ONLY_WRITABLE = False
-DEFAULT_ONLY_SELECTION = False
-DEFAULT_VIEWER = False
-DEFAULT_VIEWER_IS_FLOATING = False
-DEFAULT_VIEWER_AUTO_FIT = True
-DEFAULT_VIEWER_AUTO_RESET = False
-DEFAULT_VIEWER_AUTO_LOCK = False
-DEFAULT_VIEWER_PREMULTIPLY = False
-DEFAULT_VIEWER_RECOVERY = False
-DEFAULT_SWITCH_EDIT = False
-DEFAULT_FILTER_FOCUS = False
-DEFAULT_FILTER_RE = False
-DEFAULT_POWER_USER = False
-DEFAULT_SUSPEND_CALLBACK = False
+DEFAULT_VALUES = {
+    'vizWrongNameState': False,
+    'vizWrongPathState': False,
+    'showWrongNameState': False,
+    'showBasenameState': False,
+    'showRealAttributeValue': False,
+    'showReferenceState': False,
+    'showHeadsUp': True,
+    'showNamespaceState': True,
+    'filterInstances': False,
+    'forceRelativePath': False,
+    'browserFirstStart': False,
+    'autoSelect': False,
+    'autoReload': False,
+    'autoRename': False,
+    'onlyWritableState': False,
+    'onlySelectionState': False,
+    'viewerState': False,
+    'Viewer/isFloating': False,
+    'Viewer/autoFit': True,
+    'Viewer/autoReset': False,
+    'Viewer/autoLock': False,
+    'Viewer/premultiply': False,
+    'Viewer/recoverMode': False,
+    'switchEdit': False,
+    'filterFocus': False,
+    'filterRE': False,
+    'filterType': 0,
+    'powerUser': False,
+    'suspendCallbacks': False,
+    'suspendRenameCallbacks': False,
+    'defaultQuickFilterWords': True,
+    'FilterFileDialog/bookmarks': '',
+    'filterQuickWordsWildcard': '',
+    'filterQuickWordsRegExp': '',
+    'filterGroup': True,
+    'visibilityGroup': True,
+    'folderGroup': True,
+    'autoGroup': True,
+    'toolGroup': True,
+    'mayaGroup': True,
+}
+BOOL_VALUES_KEYS = (
+    'vizWrongNameState', 'vizWrongPathState',
+    'showWrongNameState', 'showBasenameState',
+    'showRealAttributeValue', 'showReferenceState', 'showHeadsUp',
+    'showNamespaceState', 'filterInstances', 'forceRelativePath',
+    'browserFirstStart',
+    'autoSelect', 'autoReload', 'autoRename',
+    'onlyWritableState', 'onlySelectionState', 'viewerState',
+    'Viewer/isFloating', 'Viewer/autoFit', 'Viewer/autoReset',
+    'Viewer/autoLock', 'Viewer/premultiply', 'Viewer/recoverMode',
+    'switchEdit', 'filterFocus', 'filterRE',
+    'powerUser',
+    'suspendCallbacks', 'suspendRenameCallbacks',
+    'defaultQuickFilterWords',
+    'filterGroup', 'visibilityGroup', 'folderGroup', 'autoGroup', 'toolGroup',
+    'mayaGroup',
+    'columnVisibility_0', 'columnVisibility_1', 'columnVisibility_2',
+    'columnVisibility_3', 'columnVisibility_4', 'columnVisibility_5',
+)
+INT_VALUES_KEYS = (
+    'filterType',
+)
 
+# theme found at http://www.colourlovers.com/ exclude Flashy Theme
+THEMES = {
+    'Maya Theme': (None, None, None, None, None),
+    'Flashy': ('#FF4F1E', '#F67C31', '#F7A128', '#F7DC2B', '#D1CE05'),
+    'Dusty Velvet': ('#554D7D', '#9078A8', '#C0C0F0', '#9090C0', '#606090'),
+    'Dark Spring Parakeet': ['#171717', '#292929', '#093E47', '#194D0A', '#615400'],
+    'Yellow Tree Frog': ('#E73F3F', '#F76C27', '#E7E737', '#6D9DD1', '#7E45D3'),
+    'Mod Mod Mod Mod': ('#949494', '#3A3A3A', '#3E5C5F', '#125358', '#002D31'),
+    'Blue Jay Feather': ('#1F1F20', '#2B4C7E', '#567EBB', '#606D80', '#DCE0E6'),
+    'Wonderous': ('#BE2525', '#BE5025', '#BE6825', '#BE8725', '#BEA025'),
+    'Rococo Girl': ('#CCB24C', '#F7D683', '#FFFDC0', '#FFFFFD', '#457D97'),
+    '6 Inch Heels': ('#1A2B2B', '#332222', '#4D1A1A', '#661111', '#800909'),
+    '2 Kool For Skool': ('#020304', '#541F14', '#938172', '#CC9E61', '#626266'),
+    'Retro Bath': ('#D8D6AF', '#C3B787', '#AB925C', '#DA902D', '#983727')
+}
 
-# -------------------------------------------------------------------------------------------------------------------- #
-# Define utilities
-# -------------------------------------------------------------------------------------------------------------------- #
-def db_output(msg, add_tag=None, msg_type=None):
-    """ Format output message '[TAG][add_tag] Message content'
-
-    @param msg: message content
-    @param add_tag: add extra tag to output
-    @param msg_type: define message type. Accept : None, 'warning', 'error'
-    """
-    tag_str = '[%s]' % TAG
-
-    if add_tag:
-        if not isinstance(add_tag, list):
-            add_tag = [add_tag]
-        for tag in add_tag:
-            tag_str += '[%s]' % tag.upper()
-
-    if msg_type == 'warning':
-        om.MGlobal.displayWarning('%s %s' % (tag_str, msg))
-    elif msg_type == 'error':
-        om.MGlobal.displayError('%s %s' % (tag_str, msg))
-    else:
-        # om.MGlobal.displayInfo('%s %s' % (tag_str, msg))
-        print '%s %s\n' % (tag_str, msg),
-
-
-def get_settings_bool_value(current_value):
-    """ Return boolean type from QSettings value
-
-    PySide QSettings return a unicode when value is query from a .ini file
-
-    @return: current_value as boolean
-    """
-    if isinstance(current_value, unicode):
-        return current_value == 'true'
-    else:
-        return current_value
-
-
-def get_settings_int_value(current_value):
-    """ Return integer type from QSettings value
-
-    PySide QSettings return a unicode when value is query from a .ini file
-
-    @return: current_value as integer
-    """
-    if isinstance(current_value, unicode):
-        return int(current_value)
-    else:
-        return current_value
-
-
-def convert_to_relative_path(file_path):
-    """ Convert current texture file path to a relative path
-
-    @return: relative path as a string
-    """
-    # get current sourceimages path
-    if 'sourceImages' in cmds.workspace(fileRuleList=True):
-        current_sourceimage_folder = cmds.workspace(fileRuleEntry="sourceImages")
-    else:
-        current_sourceimage_folder = 'sourceimages'
-    workspace_path = cmds.workspace(query=True, rootDirectory=True)
-    sourceimage_path = os.path.join(workspace_path, current_sourceimage_folder)
-
-    # new path
-    if current_sourceimage_folder in file_path:
-        splits = file_path.replace('\\', '/').rsplit(current_sourceimage_folder, 1)
-        file_path = os.path.join(sourceimage_path, splits[1][1:])
-
-    # get relative path if file exists
-    if os.path.isfile(file_path):
-        relative_path = cmds.workspace(projectPath=file_path)
-        return '/%s' % relative_path
-    else:
-        return file_path
-
-
-def __get_maya_window():
-    """ Get the maya main window as a QMainWindow instance
-
-    @return: Maya main window address
-    """
-    ptr = omui.MQtUtil.mainWindow()
-    return wrapInstance(long(ptr), QMainWindow)
-
-
-def __get_settings():
-    """ Create QSettings object
-
-    @return: QSettings object
-    """
-    return QSettings(QSettings.IniFormat, QSettings.UserScope, 'Bioeden', 'mtt')
-
-
-def __get_JSON_settings():
-    """ Read JSON file and create corresponding list
-
-    @return: supported_type, unsupported_type, texture_source_folder, custom_buttons
-    """
-    # json file
-    json_file_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'mtt.json')
-
-    # create file with default value if doesn't exists
-    if not os.path.isfile(json_file_path):
-        default_file_content = '''{
-    "supported_nodes":[
-        {
-            "node_type":"file",
-            "node_nicename":"FILE",
-            "node_attr":"fileTextureName"
-        },
-        {
-            "node_type":"psdFileTex",
-            "node_nicename":"PSD",
-            "node_attr":"fileTextureName"
-        },
-        {
-            "node_type":"mentalrayTexture",
-            "node_nicename":"MRT",
-            "node_attr":"fileTextureName"
-        }
-    ],
-    "workspace_extend":{
-        "texture_source_folder":"<WORKSPACE>/PSD/"
+DEFAULT_JSON_CONTENT = '''{
+  "supported_nodes":[
+    {
+      "node_type":"file",
+      "node_nicename":"FILE",
+      "node_attr":"fileTextureName"
     },
-    "custom_buttons":[
-    ],
-    "import_policy":"from dbMayaTextureToolkit.mttImportPolicy import exec_import_policy",
-    "path_pattern":"E:\\CG_Projects\\Demo_MTT"
+    {
+      "node_type":"psdFileTex",
+      "node_nicename":"PSD",
+      "node_attr":"fileTextureName"
+    },
+    {
+      "node_type":"mentalrayTexture",
+      "node_nicename":"MRT",
+      "node_attr":"fileTextureName"
+    }
+  ],
+  "workspace_extend":{
+      "texture_source_folder":"<WORKSPACE>/PSD/"
+  },
+  "custom_buttons":[
+  ],
+  "import_policy":"from dbMayaTextureToolkit.mttImportPolicy import exec_import_policy",
+  "path_pattern":"E:\\CG_Projects\\Demo_MTT",
+  "VCS": {
+    "checkout": "from dbMayaTextureToolkit.mttSourceControlTemplate import checkout",
+    "submit": "from dbMayaTextureToolkit.mttSourceControlTemplate import submit",
+    "revert": "from dbMayaTextureToolkit.mttSourceControlTemplate import revert"
+  }
 }'''
-        f = open(json_file_path, 'w')
-        f.write(default_file_content)
-        f.close()
 
-    # now read json file
-    supported_type = list()
-    unsupported_type = list()
-    texture_source_folder = ''
-    custom_buttons = list()
-    import_policy = ''
 
-    try:
-        json_file = open(json_file_path, 'r')
-        json_settings = json.load(json_file)
-        json_file.close()
+class MTTSettings(object):
 
-        maya_type = cmds.allNodeTypes()
-        for entry in json_settings['supported_nodes']:
-            if entry['node_type'] not in maya_type:
-                db_output('Unsupported node type %s' % entry['node_type'], msg_type='warning')
-                unsupported_type.append(entry['node_type'])
+    _SETTINGS = None
+    SUPPORTED_TYPE = []
+    UNSUPPORTED_TYPE = []
+    TEXTURE_SOURCE_FOLDER = ''
+    CUSTOM_BUTTONS = []
+    IMPORT_POLICY = ''
+    PATH_PATTERN = '.*'
+    VCS = {}
+
+    def __init__(self):
+        # init settings only once
+        if not MTTSettings._SETTINGS:
+            MTTSettings._SETTINGS = QSettings(
+                QSettings.IniFormat, QSettings.UserScope,
+                'Bioeden', 'mtt')
+
+            MTTSettings.__load_json_settings()
+
+    @classmethod
+    def __load_json_settings(cls):
+        """ Read JSON file and create corresponding list
+
+        @return: supported_type, unsupported_type, texture_source_folder and
+                 custom_buttons
+        """
+        # json file
+        json_file_path = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), 'mtt.json')
+
+        # create file with default value if doesn't exists
+        if not os.path.isfile(json_file_path):
+            with open(json_file_path, 'w') as f:
+                f.write(DEFAULT_JSON_CONTENT)
+
+        # now read json file
+        with open(json_file_path, 'r') as json_file:
+            json_settings = json.load(json_file)
+
+        # get supported node types
+        maya_type = set(cmds.allNodeTypes())
+        for entry in json_settings.get('supported_nodes', []):
+            entry_type = entry.get('node_type', '')
+            if entry_type not in maya_type:
+                cmds.warning('Unsupported node type %s' % entry_type)
+                MTTSettings.UNSUPPORTED_TYPE.append(entry_type)
             else:
-                supported_type.append((entry['node_type'], entry['node_nicename'], entry['node_attr']))
+                MTTSettings.SUPPORTED_TYPE.append((
+                    entry_type,
+                    entry.get('node_nicename', entry_type),
+                    entry.get('node_attr', 'fileTextureName')))
 
-        texture_source_folder = json_settings['workspace_extend']['texture_source_folder']
+        # get workspace extend
+        ws_extend = json_settings.get('workspace_extend', {})
+        # get texture source folder
+        MTTSettings.TEXTURE_SOURCE_FOLDER = ws_extend.get(
+            'texture_source_folder', '<WORKSPACE>/PSD/')
 
-        for customButtonData in json_settings['custom_buttons']:
-            custom_buttons.append((customButtonData['icon'], customButtonData['tooltip'], customButtonData['cmd']))
+        # get custom buttons
+        for customButtonData in json_settings.get('custom_buttons', []):
+            MTTSettings.CUSTOM_BUTTONS.append((
+                customButtonData.get('icon', ':/menuIconImages.png'),
+                customButtonData.get('tooltip', ''),
+                customButtonData.get('cmd', '')
+            ))
 
-        import_policy = json_settings['import_policy']
+        # get import policy
+        MTTSettings.IMPORT_POLICY = json_settings.get('import_policy', '')
 
+        # get path pattern
         if 'path_pattern' in json_settings:
             # convert string to raw string
-            path_pattern = ('%r' % json_settings['path_pattern'])[2:-1]
+            MTTSettings.PATH_PATTERN = ('%r' % json_settings['path_pattern'])[2:-1]
+
+        # get VCS commands
+        if 'VCS' in json_settings:
+            MTTSettings.VCS = json_settings['VCS']
+
+    @classmethod
+    def _get_as_bool(cls, value):
+        return value == 'true' if isinstance(value, unicode) else value
+
+    @classmethod
+    def _get_as_int(cls, value):
+        return int(value) if isinstance(value, unicode) else value
+
+    @classmethod
+    def value(cls, key, default_value=None):
+        default_value = DEFAULT_VALUES.get(key, default_value)
+        value = cls._SETTINGS.value(key, default_value)
+
+        if key in BOOL_VALUES_KEYS:
+            return cls._get_as_bool(value)
+        elif key in INT_VALUES_KEYS:
+            return cls._get_as_int(value)
         else:
-            path_pattern = '.*'
+            return value
 
-    except ValueError, e:
-        db_output('Error when loading JSON file :\n%s' % e)
+    @classmethod
+    def set_value(cls, key, value):
+        cls._SETTINGS.setValue(key, value)
 
-    return supported_type, unsupported_type, texture_source_folder, custom_buttons, import_policy, path_pattern
+    @classmethod
+    def remove(cls, key):
+        cls._SETTINGS.remove(key)
 
-
-MAYA_MAIN_WINDOW = __get_maya_window()
-SETTINGS = __get_settings()
-SUPPORTED_TYPE, UNSUPPORTED_TYPE, TEXTURE_SOURCE_FOLDER, CUSTOM_BUTTONS, IMPORT_POLICY, PATH_PATTERN = __get_JSON_settings()
+    @classmethod
+    def filename(cls):
+        return cls._SETTINGS.fileName()

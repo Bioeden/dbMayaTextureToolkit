@@ -1,9 +1,11 @@
 # Qt import
 from PySide.QtGui import (
-    QMessageBox, QHBoxLayout, QWidget, QPushButton, QComboBox,
-    QPixmap, QPainter, QCursor
+    QApplication, QMessageBox, QHBoxLayout, QWidget, QPushButton, QComboBox,
+    QScrollArea, QPixmap, QPainter, QCursor, QPen
 )
 from PySide.QtCore import Signal, Qt
+# Maya import
+from maya import cmds
 # custom import
 from mttConfig import TOOLBAR_BUTTON_SIZE
 
@@ -55,20 +57,30 @@ class StatusToolbarButton(QPushButton):
         self.icon = QPixmap(pix_ico)
         self.setFlat(True)
         self.setFixedSize(TOOLBAR_BUTTON_SIZE, TOOLBAR_BUTTON_SIZE)
+        self.new_ui = float(cmds.about(version=True)) >= 2016
+
+        palette = QApplication.palette()
+        self.highlight = palette.highlight().color()
 
     def paintEvent(self, event):
-        QPushButton.paintEvent(self, event)
+        mouse_pos = self.mapFromGlobal(QCursor.pos())
+        is_hover = self.contentsRect().contains(mouse_pos)
 
-        if self.isChecked():
-            compo_mode = QPainter.CompositionMode_Overlay
-        elif self.contentsRect().contains(self.mapFromGlobal(QCursor.pos())):
-            compo_mode = QPainter.CompositionMode_ColorDodge
-        else:
-            compo_mode = QPainter.CompositionMode_SourceOver
+        if not self.new_ui:
+            QPushButton.paintEvent(self, event)
 
         painter = QPainter(self)
-        painter.setCompositionMode(compo_mode)
+        if self.new_ui and self.isChecked():
+            painter.setRenderHint(QPainter.Antialiasing)
+            painter.setPen(QPen(Qt.NoPen))
+            painter.setBrush(self.highlight)
+            painter.drawRoundedRect(event.rect(), 2, 2)
+
         painter.drawPixmap(2, 2, self.icon)
+
+        if is_hover:
+            painter.setCompositionMode(QPainter.CompositionMode_Screen)
+            painter.drawPixmap(2, 2, self.icon)
 
 
 class SeparatorButton(QPushButton):
@@ -86,16 +98,16 @@ class SeparatorButton(QPushButton):
         self.setFixedSize(10, 20)
 
     def paintEvent(self, event):
+        mouse_pos = self.mapFromGlobal(QCursor.pos())
+        is_hover = self.contentsRect().contains(mouse_pos)
+
         QPushButton.paintEvent(self, event)
 
-        if self.contentsRect().contains(self.mapFromGlobal(QCursor.pos())):
-            compo_mode = QPainter.CompositionMode_ColorDodge
-        else:
-            compo_mode = QPainter.CompositionMode_SourceOver
-
         painter = QPainter(self)
-        painter.setCompositionMode(compo_mode)
         painter.drawPixmap(2, 1, self.icon)
+        if is_hover:
+            painter.setCompositionMode(QPainter.CompositionMode_Screen)
+            painter.drawPixmap(2, 1, self.icon)
 
     def set_collapse(self, state):
         self.icon = self.pix[state]
@@ -104,6 +116,8 @@ class SeparatorButton(QPushButton):
 class StatusCollapsibleLayout(QWidget):
     """ Collapsible layout with Maya Status Line's style """
 
+    toggled = Signal(bool)
+
     def __init__(self, parent=None, section_name=None):
         super(StatusCollapsibleLayout, self).__init__(parent)
 
@@ -111,7 +125,6 @@ class StatusCollapsibleLayout(QWidget):
         self.state = True
 
         self.toggle_btn = SeparatorButton()
-        # self.toggle_btn.setIconSize(QSize(10, 17))
         if section_name is None:
             section_name = 'Show/Hide section'
         self.toggle_btn.setToolTip(section_name)
@@ -121,7 +134,7 @@ class StatusCollapsibleLayout(QWidget):
         self.group_layout = QHBoxLayout()
         self.group_layout.setAlignment(Qt.AlignLeft)
         self.group_layout.setContentsMargins(0, 0, 0, 0)
-        self.group_layout.setSpacing(0)
+        self.group_layout.setSpacing(1)
         self.group_layout.addWidget(self.toggle_btn)
 
         self.setLayout(self.group_layout)
@@ -142,6 +155,7 @@ class StatusCollapsibleLayout(QWidget):
             btn.setVisible(self.state)
 
         self.toggle_btn.set_collapse(self.state)
+        self.toggled.emit(self.state)
 
     def set_current_state(self, state):
         if isinstance(state, unicode):
@@ -158,6 +172,56 @@ class StatusCollapsibleLayout(QWidget):
 
     def current_state(self):
         return self.state
+
+    def length(self):
+        count = self.button_count()
+        # count * button size + spacing
+        return count * TOOLBAR_BUTTON_SIZE + count
+
+
+class StatusScrollArea(QScrollArea):
+    def __init__(self):
+        super(StatusScrollArea, self).__init__()
+
+        self._width = 0
+        self._group_count = 0
+
+        self.__create_ui()
+        self.__init_ui()
+
+    def __create_ui(self):
+        self.container = QWidget()
+        self.container_layout = QHBoxLayout()
+
+        self.container.setLayout(self.container_layout)
+        self.setWidget(self.container)
+
+    def __init_ui(self):
+        self.container.setFixedHeight(TOOLBAR_BUTTON_SIZE)
+        self.container_layout.setContentsMargins(0, 0, 0, 0)
+        self.container_layout.setSpacing(1)
+        self.container_layout.setAlignment(Qt.AlignLeft)
+
+        self.setFixedHeight(TOOLBAR_BUTTON_SIZE)
+        self.setFocusPolicy(Qt.NoFocus)
+        self.setFrameShape(self.NoFrame)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+
+    def _update_width(self, expand):
+        self._width += self.sender().length() * [-1, 1][expand]
+        self.container.setFixedWidth(self._width + self._group_count)
+
+    def add_widget(self, widget):
+        # add widget to layout
+        self.container_layout.addWidget(widget)
+
+        # connect widget for future update when user interact with it
+        widget.toggled.connect(self._update_width)
+
+        # expand widget layout
+        self._width += widget.length()
+        self._group_count += 1
+        self.container.setFixedWidth(self._width)
 
 
 class MessageBoxWithCheckbox(QMessageBox):

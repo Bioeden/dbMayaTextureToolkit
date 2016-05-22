@@ -18,6 +18,7 @@ VIEWER_NAME = 'dbMayaTextureToolkitViewer'
 VIEWER_TITLE = 'MTT Viewer'
 CREATE_NODE_TITLE = 'MTT Create Node'
 TAG = 'MTT'
+WS_KEY = '<WORKSPACE>'
 
 COLUMN_COUNT = 6
 NODE_NAME, NODE_TYPE, NODE_REFERENCE, FILE_STATE, FILE_COUNT, NODE_FILE = range(
@@ -71,6 +72,7 @@ TOOLBAR_BUTTON_ICON_SIZE = 16
 DEFAULT_VALUES = {
     'vizWrongNameState': False,
     'vizWrongPathState': False,
+    'vizExternalState': False,
     'showWrongNameState': False,
     'showBasenameState': False,
     'showRealAttributeValue': False,
@@ -111,7 +113,7 @@ DEFAULT_VALUES = {
     'mayaGroup': True,
 }
 BOOL_VALUES_KEYS = (
-    'vizWrongNameState', 'vizWrongPathState',
+    'vizWrongNameState', 'vizWrongPathState', 'vizExternalState',
     'showWrongNameState', 'showBasenameState',
     'showRealAttributeValue', 'showReferenceState', 'showHeadsUp',
     'showNamespaceState', 'filterInstances', 'forceRelativePath',

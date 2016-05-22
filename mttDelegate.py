@@ -24,6 +24,9 @@ class MTTDelegate(QStyledItemDelegate):
     def __init__(self):
         super(MTTDelegate, self).__init__()
 
+        # this flag is used to show external files
+        self.ws_path = os.path.normpath(cmds.workspace(q=True, rd=True))
+
     def paint(self, painter, option, index):
         # NODE_REFERENCE ---------------------------------------------------
         if index.column() == NODE_REFERENCE:
@@ -155,6 +158,14 @@ class MTTDelegate(QStyledItemDelegate):
                 else palette.text().color()
 
             text = index.model().data(index, Qt.DisplayRole)
+            if MTTSettings.value('vizExternalState'):
+                if not text.startswith(self.ws_path):
+                    bg_color = QBrush(
+                        '#ef7900'
+                        if option.state & QStyle.State_Selected
+                        else '#b05100',
+                        Qt.Dense4Pattern)
+
             if MTTSettings.value('vizWrongPathState'):
                 if not re.match(MTTSettings.PATH_PATTERN, text):
                     bg_color = QBrush(

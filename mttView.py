@@ -28,7 +28,7 @@ from mttConfig import (
 )
 from mttCmd import (
     convert_to_relative_path, get_source_file,
-    check_editor_preferences, mtt_log
+    check_editor_preferences, mtt_log, set_attr
 )
 from mttCmdUi import get_maya_window
 from mttCustomWidget import RightPushButton, MessageBoxWithCheckbox
@@ -151,6 +151,7 @@ class MTTView(QMainWindow):
             self.settings_menu, self.model, self.proxy)
         self.status_line_ui.viewerToggled.connect(self.on_toggle_viewer)
         self.status_line_ui.pinModeToggled.connect(self.on_pin_toggle)
+        self.status_line_ui.externalVizToggled.connect(self._update_workspace)
         self.status_line_ui.filterSelectionToggled.connect(
             self.update_selection_change_callback_state)
 
@@ -172,6 +173,9 @@ class MTTView(QMainWindow):
         self.centralWidget().setGeometry(
             MTTSettings.value('centralGeometry', QRect(0, 0, 400, 200))
         )
+
+        # update delegate workspace
+        self._update_workspace()
 
         # restore table header width
         if not self.table_view.horizontalHeader().restoreState(
@@ -363,6 +367,10 @@ class MTTView(QMainWindow):
         cmds.optionVar(stringValue=('filtered_instances', ''))
         self.model.layoutChanged.emit()
         self.__update_node_file_count_ui()
+
+    def _update_workspace(self):
+        workspace_root = os.path.normpath(cmds.workspace(q=True, rd=True))
+        self.delegate.ws_path = workspace_root
 
     def on_pin_toggle(self, state):
         self.model.layoutAboutToBeChanged.emit()
@@ -580,7 +588,7 @@ class MTTView(QMainWindow):
                 node_attr_value = cmds.getAttr('%s.%s' % (node, node_attr_name))
                 if node_attr_value not in reloaded_files:
                     reloaded_files.append(node_attr_value)
-                    cmds.setAttr('%s.%s' % (node, node_attr_name), node_attr_value, type="string")
+                    set_attr(node, node_attr_name, node_attr_value, attr_type="string")
             self.model.is_reloading_file = False
             mtt_log('%d node%s reloaded' % (len(nodes), ('s' if len(nodes) > 1 else '')), verbose=True)
         else:
@@ -804,9 +812,10 @@ class MTTView(QMainWindow):
 
     def on_edit_source_files(self):
         source_files = set()
-        read_only_files = set()
+        user_choice_files = set()
         missing_files = set()
 
+        self._update_workspace()
         nodes = self.get_selected_table_nodes()
         if not nodes:
             mtt_log('Nothing selected... nothing to show')
@@ -829,20 +838,23 @@ class MTTView(QMainWindow):
                 missing_files.add(absolute_path)
                 continue
 
-            # finally sort writable and non-writable source files
-            if os.access(source_file, os.W_OK):
+            is_external = not source_file.startswith(self.delegate.ws_path)
+            is_writable = os.access(source_file, os.W_OK)
+
+            # finally sort writable and internal source files from others
+            if is_writable and not is_external:
                 source_files.add(source_file)
             else:
-                read_only_files.add(source_file)
+                user_choice_files.add((source_file, is_writable, is_external))
 
-        # open writable source files
+        # open writable source files from current workspace
         for source in source_files:
             cmds.launchImageEditor(editImageFile=source)
             mtt_log('Opening "%s"' % source, verbose=True)
 
-        # open writable source files if user want it
-        for source in read_only_files:
-            if self.__prompt_for_open_readonly_source_file(source):
+        # open non writable source files if user want it
+        for source, is_writable, is_external in user_choice_files:
+            if self.__prompt_to_open_file(source, is_writable, is_external):
                 cmds.launchImageEditor(editImageFile=source)
                 mtt_log('Opening "%s"' % source, verbose=True)
             else:
@@ -962,7 +974,7 @@ class MTTView(QMainWindow):
                                 node_attr_value = self.model.get_node_attribute(node_name)
                                 new_path = os.path.normpath(os.path.join(custom_path[0], os.path.basename(node_attr_value)))
                                 new_path = new_path.replace('\\', '/')
-                                cmds.setAttr('%s.%s' % (node_name, node_attr_name), new_path, type="string")
+                                set_attr(node_name, node_attr_name, new_path, type="string")
                 self.model.suspend_force_sort = False
                 self.is_batching_change_attr = False
                 self.model.request_sort()
@@ -1006,12 +1018,12 @@ class MTTView(QMainWindow):
                         if cmds.sysFile(file_fullpath, copy=destination_path):
                             mtt_log('%s copied.' % os.path.basename(destination_path), verbose=True)
                             os.chmod(destination_path, stat.S_IWRITE)
-                            cmds.setAttr('%s.%s' % (node_name, node_attr_name), destination_path, type="string")
+                            set_attr(node_name, node_attr_name, destination_path, attr_type="string")
                         else:
                             mtt_log('%s copy failed.' % os.path.basename(destination_path), msg_type='warning', verbose=True)
                     else:
                         if file_history[file_fullpath]:
-                            cmds.setAttr('%s.%s' % (node_name, node_attr_name), file_history[file_fullpath], type="string")
+                            set_attr(node_name, node_attr_name, file_history[file_fullpath], attr_type="string")
 
         self.model.suspend_force_sort = False
         self.is_batching_change_attr = False
@@ -1060,14 +1072,14 @@ class MTTView(QMainWindow):
 
                         if self.model.get_file_state(file_fullpath) == 1:
                             if cmds.sysFile(file_fullpath, rename=new_path):
-                                cmds.setAttr('%s.%s' % (node_name, node_attr_name), new_path, type="string")
+                                set_attr(node_name, node_attr_name, new_path, attr_type="string")
                             else:
                                 mtt_log('%s rename failed.' % filename, msg_type='warning', verbose=True)
                         else:
                             mtt_log('%s rename aborted (read-only).' % filename, msg_type='warning', verbose=True)
                     else:
                         if file_history[file_fullpath]:
-                            cmds.setAttr('%s.%s' % (node_name, node_attr_name), file_history[file_fullpath], type="string")
+                            set_attr(node_name, node_attr_name, file_history[file_fullpath], attr_type="string")
 
             self.model.suspend_force_sort = False
             self.is_batching_change_attr = False
@@ -1156,9 +1168,19 @@ class MTTView(QMainWindow):
         elif ret == QMessageBox.No:
             return False
 
-    def __prompt_for_open_readonly_source_file(self, filename):
+    def __prompt_to_open_file(self, filename, is_writable, is_external):
         checkout_btn = None
-        msg = '<b>%s</b> is a read-only file.' % os.path.basename(filename)
+        msg = ''
+
+        # add non writable comment
+        if not is_writable:
+            msg += '<b>%s</b> is a read-only file.' % os.path.basename(filename)
+            msg += '<br/>'
+
+        # add external comment
+        if is_external:
+            msg += '<br/>This file is not in the current workspace :'
+            msg += '<br/>{}'.format(filename)
 
         message_box = QMessageBox()
         message_box.setWindowTitle(WINDOW_TITLE)
@@ -1168,7 +1190,7 @@ class MTTView(QMainWindow):
 
         # create buttons
         yes_btn = message_box.addButton('Yes', QMessageBox.YesRole)
-        if 'checkout' in MTTSettings.VCS:
+        if not is_external and 'checkout' in MTTSettings.VCS:
             checkout_btn = message_box.addButton(
                 'Yes && Checkout', QMessageBox.AcceptRole)
         no_btn = message_box.addButton('No', QMessageBox.DestructiveRole)
@@ -1409,16 +1431,17 @@ class MTTView(QMainWindow):
                 or not old_name \
                 or MTTSettings.value('suspendRenameCallbacks'):
             return
-        new_node = om.MFnDependencyNode(node)
-        if new_node.typeName() in self.supported_format_dict.iterkeys():
-            new_node_name = new_node.name()
-            if new_node_name != old_name:
-                self.model.rename_database_node(old_name, new_node_name)
+        dep_node = om.MFnDependencyNode(node)
+        if dep_node.typeName() in self.supported_format_dict:
+            new_name = dep_node.name()
+            if new_name != old_name:
+                self.model.rename_database_node(old_name, new_name)
                 if self.proxy.selected_texture_nodes is not None:
-                    self.proxy.selected_texture_nodes.remove(old_name)
-                    self.proxy.selected_texture_nodes.add(new_node_name)
+                    if old_name in self.proxy.selected_texture_nodes:
+                        self.proxy.selected_texture_nodes.remove(old_name)
+                    self.proxy.selected_texture_nodes.add(new_name)
                 self.model.request_sort()
-                self.attribute_callback_id[new_node_name] = self.attribute_callback_id.pop(old_name)
+                self.attribute_callback_id[new_name] = self.attribute_callback_id.pop(old_name)
 
     def callback_add_node(self, node, clientData=None):
         if cmds.optionVar(query='suspendCallbacks'):
@@ -1427,17 +1450,17 @@ class MTTView(QMainWindow):
         if cmds.nodeType(new_node_name) in self.supported_format_dict.iterkeys():
             self.model.database_add_new_node(new_node_name)
             self.model.request_sort()
-            self.create_attribute_calllback(new_node_name)
+            self.create_attribute_callback(new_node_name)
             self.__update_node_file_count_ui()
 
     def callback_remove_node(self, node, clientData=None):
         if cmds.optionVar(query='suspendCallbacks'):
             return
-        node_name = om.MFnDependencyNode(node).name()
-        if cmds.nodeType(node_name) in self.supported_format_dict.iterkeys():
-            self.model.database_remove_node(node_name)
+        dep_node = om.MFnDependencyNode(node)
+        if dep_node.typeName() in self.supported_format_dict:
+            self.model.database_remove_node(dep_node.name())
             self.model.request_sort()
-            self.remove_attribute_callback(node_name)
+            self.remove_attribute_callback(dep_node.name())
             self.__update_node_file_count_ui()
 
     def callback_attribute_changed(self, node_msg, plug, otherPlug, clientData=None):
@@ -1465,7 +1488,7 @@ class MTTView(QMainWindow):
                     for extra_node in extra_nodes:
                         cmds.optionVar(intValue=('suspendCallbacks', True))
                         node_attr_name = self.supported_format_dict[cmds.nodeType(extra_node)]
-                        cmds.setAttr('%s.%s' % (extra_node, node_attr_name), new_path, type="string")
+                        set_attr(extra_node, node_attr_name, new_path, attr_type="string")
                         if self.model.change_node_attribute(extra_node, new_path):
                             if is_auto_rename_activated:
                                 self.on_rename_node(extra_node)
@@ -1541,6 +1564,7 @@ class MTTView(QMainWindow):
         cmds.optionVar(stringValue=('filtered_instances', ''))
         self.status_line_ui.pin_btn.setChecked(False)
         MTTSettings.remove('pinnedNode')
+        self._update_workspace()
         self.clear_all_attribute_callbacks()
         self.model.file_watch_remove_all()
         self.model.database_reset()
@@ -1554,9 +1578,9 @@ class MTTView(QMainWindow):
     def apply_attribute_change_callback(self):
         nodes = self.model.get_all_nodes_name()
         for nodeName in nodes:
-            self.create_attribute_calllback(nodeName[0])
+            self.create_attribute_callback(nodeName[0])
 
-    def create_attribute_calllback(self, node_name):
+    def create_attribute_callback(self, node_name):
         # get MObject of node_name
         sel = om.MSelectionList()
         sel.add(node_name)

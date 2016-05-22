@@ -7,7 +7,7 @@ from PySide.QtGui import (QHBoxLayout, QLabel)
 from maya import cmds
 # Custom import
 from mttConfig import MTTSettings
-from mttCustomWidget import StatusCollapsibleLayout
+from mttCustomWidget import StatusCollapsibleLayout, StatusScrollArea
 import mttFilterFileDialog
 import mttCmd
 import mttCmdUi
@@ -19,6 +19,7 @@ class MTTStatusLine(QHBoxLayout):
     viewerToggled = Signal()
     filterSelectionToggled = Signal(bool)
     pinModeToggled = Signal(bool)
+    externalVizToggled = Signal()
 
     def __init__(self, settings_menu, model, proxy):
         super(MTTStatusLine, self).__init__()
@@ -32,18 +33,19 @@ class MTTStatusLine(QHBoxLayout):
 
     def __create_ui(self):
         # FILTERS
-        self.addWidget(self._create_filter_group())
-        self.addWidget(self._create_visibility_group())
-        self.addWidget(self._create_folder_group())
-        self.addWidget(self._create_auto_group())
-        self.addWidget(self._create_mtt_tools_group())
-        self.addWidget(self._create_maya_tools_group())
+        scroll_area = StatusScrollArea()
+        scroll_area.add_widget(self._create_filter_group())
+        scroll_area.add_widget(self._create_visibility_group())
+        scroll_area.add_widget(self._create_folder_group())
+        scroll_area.add_widget(self._create_auto_group())
+        scroll_area.add_widget(self._create_mtt_tools_group())
+        scroll_area.add_widget(self._create_maya_tools_group())
         user_grp = self._create_user_group()
         if user_grp:
-            self.addWidget(user_grp)
+            scroll_area.add_widget(user_grp)
+        self.addWidget(scroll_area)
 
         # STATS information
-        self.addStretch(2)
         self.stat_info = QLabel()
         self.stat_info.setAlignment(Qt.AlignCenter | Qt.AlignRight)
         self.stat_info.setText('0 File | 0/0 Node')
@@ -58,6 +60,7 @@ class MTTStatusLine(QHBoxLayout):
         self.addWidget(self.info_btn)
 
     def __init_ui(self):
+        self.setContentsMargins(0, 0, 0, 0)
         self.setAlignment(Qt.AlignLeft)
 
         # FILTER GROUP
@@ -75,6 +78,8 @@ class MTTStatusLine(QHBoxLayout):
             MTTSettings.value('vizWrongNameState'))
         self.wrong_path_visibility_btn.setChecked(
             MTTSettings.value('vizWrongPathState'))
+        self.external_visibility_btn.setChecked(
+            MTTSettings.value('vizExternalState'))
         self.basename_visibility_btn.setChecked(
             MTTSettings.value('showBasenameState'))
         self.namespace_visibility_btn.setChecked(
@@ -153,6 +158,12 @@ class MTTStatusLine(QHBoxLayout):
             self.on_wrong_name_visibility,
             True)
 
+        self.external_visibility_btn = mttCmdUi.create_status_button(
+            ':/tb_vizExternal',
+            'Highlight Texture path that comes from outside current workspace',
+            self.on_external_visibility,
+            True)
+
         self.wrong_path_visibility_btn = mttCmdUi.create_status_button(
             ':/tb_vizWrongPath',
             'Highlight Texture path clashing with user defined path pattern',
@@ -176,6 +187,7 @@ class MTTStatusLine(QHBoxLayout):
             section_name='Show/Hide the visibility icons')
         self.visibility_grp.add_button(self.namespace_visibility_btn)
         self.visibility_grp.add_button(self.wrong_name_visibility_btn)
+        self.visibility_grp.add_button(self.external_visibility_btn)
         self.visibility_grp.add_button(self.wrong_path_visibility_btn)
         self.visibility_grp.add_button(self.basename_visibility_btn)
 
@@ -337,6 +349,13 @@ class MTTStatusLine(QHBoxLayout):
         """ Highlight Texture path clashing with user defined path pattern """
         self._set_filter_value(
             'vizWrongPathState', self.wrong_path_visibility_btn.isChecked())
+
+    def on_external_visibility(self):
+        """ Highlight Texture path that comes from outside current workspace """
+        state = self.external_visibility_btn.isChecked()
+        self._set_filter_value('vizExternalState', state)
+        if state:
+            self.externalVizToggled.emit()
 
     def on_basename_visibility(self):
         """ Filter file path """

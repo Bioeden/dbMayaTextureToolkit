@@ -5,7 +5,7 @@ from PySide.QtGui import QMessageBox
 # Maya import
 from maya import cmds
 # custom import
-from mttConfig import WINDOW_TITLE, MTTSettings
+from mttConfig import WINDOW_TITLE, MTTSettings, WS_KEY
 
 
 def mtt_log(msg, add_tag=None, msg_type=None, verbose=False):
@@ -39,23 +39,38 @@ def mtt_log(msg, add_tag=None, msg_type=None, verbose=False):
         cmds.headsUpMessage(msg)
 
 
+def get_attr(node, attr, default_value=None):
+    if cmds.attributeQuery(attr, node=node, exists=True):
+        return cmds.getAttr('{}.{}'.format(node, attr))
+    else:
+        return default_value
+
+
+def set_attr(node, attr, value, attr_type=None):
+    attr_name = '{}.{}'.format(node, attr)
+    state = cmds.getAttr(attr_name, lock=True)
+    if attr_type:
+        cmds.setAttr(attr_name, value, type=attr_type, lock=state)
+    else:
+        cmds.setAttr(attr_name, value, lock=state)
+
+
 def get_texture_source_folder(alt_path=None):
     """ Return texture source folder
 
     :param alt_path:
     """
-    key = '<WORKSPACE>'
     texture_source_folder = MTTSettings.TEXTURE_SOURCE_FOLDER
-    if key in MTTSettings.TEXTURE_SOURCE_FOLDER:
+    if WS_KEY in MTTSettings.TEXTURE_SOURCE_FOLDER:
         ws = cmds.workspace(query=True, rootDirectory=True)
-        texture_source_folder = MTTSettings.TEXTURE_SOURCE_FOLDER.replace(key, ws)
+        texture_source_folder = MTTSettings.TEXTURE_SOURCE_FOLDER.replace(WS_KEY, ws)
 
     texture_source_folder = os.path.normpath(texture_source_folder)
 
     if not os.path.isdir(texture_source_folder):
         # if default folder not found, try in sourceimages folder
-        if key in MTTSettings.TEXTURE_SOURCE_FOLDER and alt_path:
-            texture_source_folder = MTTSettings.TEXTURE_SOURCE_FOLDER.replace(key, alt_path)
+        if WS_KEY in MTTSettings.TEXTURE_SOURCE_FOLDER and alt_path:
+            texture_source_folder = MTTSettings.TEXTURE_SOURCE_FOLDER.replace(WS_KEY, alt_path)
             texture_source_folder = os.path.normpath(texture_source_folder)
             if not os.path.isdir(texture_source_folder):
                 # if another location doesn't exists, return workspace root
@@ -125,7 +140,6 @@ def get_source_file(file_path):
     :param file_path: (string) file path
     :return path to the source file
     """
-    key = '<WORKSPACE>'
     source_pattern = MTTSettings.TEXTURE_SOURCE_FOLDER
     ws = cmds.workspace(query=True, rootDirectory=True)
 
@@ -137,7 +151,7 @@ def get_source_file(file_path):
     result = []
 
     # scan PATTERN if absolute path
-    if key not in source_pattern:
+    if WS_KEY not in source_pattern:
         if is_source_file_in_path(source_pattern, file_names, result):
             return result[0]
 
@@ -148,7 +162,7 @@ def get_source_file(file_path):
 
     # scan FILE PATH SOURCE FOLDER USING PATTERN
     scan_path = os.path.normpath(
-        os.path.join(path, source_pattern.replace(key, '..')))
+        os.path.join(path, source_pattern.replace(WS_KEY, '..')))
     if is_source_file_in_path(scan_path, file_names, result):
         return result[0]
 
@@ -158,7 +172,7 @@ def get_source_file(file_path):
         return result[0]
 
     # scan WORKSPACE SOURCE FOLDER USING PATTERN
-    scan_path = os.path.normpath(source_pattern.replace(key, ws))
+    scan_path = os.path.normpath(source_pattern.replace(WS_KEY, ws))
     if is_source_file_in_path(scan_path, file_names, result):
         return result[0]
 
@@ -220,3 +234,4 @@ def check_editor_preferences():
             if app_path is not None:
                 cmds.optionVar(sv=('PhotoshopDir', app_path[0]))
                 cmds.optionVar(sv=('EditImageDir', app_path[0]))
+

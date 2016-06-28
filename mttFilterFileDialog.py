@@ -11,7 +11,7 @@ from PySide.QtGui import (
 # Maya import
 from maya import cmds
 # Custom import
-from mttCmd import convert_to_relative_path, mtt_log
+from mttCmd import convert_to_relative_path, mtt_log, set_attr
 from mttCmdUi import get_maya_window
 from mttConfig import MTTSettings, CREATE_NODE_TITLE
 from mttImportPolicy import exec_import_policy
@@ -438,7 +438,7 @@ def create_nodes(define_path='', define_type=None):
             if convert:
                 f = convert_to_relative_path(f)
 
-            cmds.setAttr('%s.%s' % (new_node, node_attr), f, type='string')
+            set_attr(new_node, node_attr, f, attr_type='string')
 
             if MTTSettings.IMPORT_POLICY:
                 try:
@@ -448,7 +448,8 @@ def create_nodes(define_path='', define_type=None):
                     )
 
                 except RuntimeError:
-                    mtt_log('Fail to run import policy.', msg_type='error')
+                    mtt_log('Fail to run import policy.', msg_type='error',
+                            verbose=False)
 
             nodes.append(new_node)
 

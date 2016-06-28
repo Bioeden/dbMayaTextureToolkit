@@ -13,7 +13,7 @@ from mttConfig import (
     MTTSettings,
     NODE_NAME, NODE_FILE, NODE_TYPE, NODE_REFERENCE, FILE_STATE, FILE_COUNT,
     VIEW_COLUMN_LABEL, DB_COLUMN_LABEL, COLUMN_COUNT)
-from mttCmd import mtt_log
+from mttCmd import mtt_log, set_attr
 
 
 # noinspection SqlResolve
@@ -38,7 +38,8 @@ class MTTModel(QAbstractTableModel):
         try:
             self._database_create_table()
         except sqlite3.Error, e:
-            mtt_log('Error init DB :\n\t>> %s <<\n' % e, msg_type='error')
+            mtt_log('Error init DB :\n\t>> %s <<\n' % e, msg_type='error',
+                    verbose=False)
             sys.exit(1)
 
         # populate database
@@ -243,7 +244,8 @@ class MTTModel(QAbstractTableModel):
 
         # check if current scene is empty
         if not file_content:
-            mtt_log('Nothing to save. Operation aborted.', msg_type='warning')
+            mtt_log('Nothing to save. Operation aborted.', msg_type='warning',
+                    verbose=False)
             return
 
         # clean output
@@ -274,7 +276,7 @@ class MTTModel(QAbstractTableModel):
                 csv_file_writer.writerow(['NODE NAME', 'NODE TYPE', 'IS REF', 'MISSING', 'INSTANCE COUNT', 'FILE PATH'])
                 csv_file_writer.writerows(file_content)
                 csv_file.close()
-                mtt_log('CSV file saved to %s' % file_path)
+                mtt_log('CSV file saved to %s' % file_path, verbose=False)
                 cmds.launchImageEditor(viewImageFile=os.path.dirname(file_path))
 
     def database_dump_csv(self):
@@ -290,7 +292,8 @@ class MTTModel(QAbstractTableModel):
         csv_file_writer = csv.writer(csv_file, delimiter=';')
         csv_file_writer.writerows(c.fetchall())
         csv_file.close()
-        mtt_log('CSV Dump write into : %s' % file_path, add_tag='DEBUG')
+        mtt_log('CSV Dump write into : %s' % file_path, add_tag='DEBUG',
+                verbose=False)
         cmds.launchImageEditor(viewImageFile=os.path.dirname(__file__))
 
     def database_dump_sql(self):
@@ -298,7 +301,8 @@ class MTTModel(QAbstractTableModel):
         with open(sql_file, 'w') as f:
             for line in self.db.iterdump():
                 f.write('%s\n' % line)
-        mtt_log('SQL Dump write into : %s' % sql_file, add_tag='DEBUG')
+        mtt_log('SQL Dump write into : %s' % sql_file, add_tag='DEBUG',
+                verbose=False)
         cmds.launchImageEditor(viewImageFile=os.path.dirname(__file__))
 
     def flags(self, index):
@@ -406,11 +410,8 @@ class MTTModel(QAbstractTableModel):
 
             elif column == NODE_FILE:
                 node_type = cmds.nodeType(name)
-                cmds.setAttr(
-                    '%s.%s' % (name, self.supported_format_dict[node_type]),
-                    value,
-                    type='string'
-                )
+                attr = self.supported_format_dict[node_type]
+                set_attr(name, attr, value, attr_type='string')
                 self.request_sort()
                 return True
 
@@ -517,7 +518,8 @@ class MTTModel(QAbstractTableModel):
 
         if cmds.lockNode(node_name, query=True, lock=True)[0] \
                 or cmds.referenceQuery(node_name, isNodeReferenced=True):
-            mtt_log('%s is locked, cannot perform rename' % node_name)
+            mtt_log('%s is locked, cannot perform rename' % node_name,
+                    verbose=False)
             return node_name
 
         wanted_name = self.validate_node_name(wanted_name)
@@ -556,7 +558,8 @@ class MTTModel(QAbstractTableModel):
         if cmds.lockNode(node_name, query=True, lock=True)[0] \
                 or cmds.referenceQuery(node_name, isNodeReferenced=True):
 
-            mtt_log('%s is locked, cannot perform changePath\n' % node_name)
+            mtt_log('%s is locked, cannot perform changePath\n' % node_name,
+                    verbose=False)
             return False
 
         if self.is_reloading_file:
@@ -859,8 +862,7 @@ class MTTModel(QAbstractTableModel):
     def set_database_node_and_attribute(self, node_name, node_attr_value):
         """ Set absolute or relative file path """
         node_attr = self.supported_format_dict[cmds.nodeType(node_name)]
-        cmds.setAttr(
-            '%s.%s' % (node_name, node_attr), node_attr_value, type='string')
+        set_attr(node_name, node_attr, node_attr_value, attr_type='string')
 
         c = self.db.cursor()
         c.execute(
@@ -908,8 +910,7 @@ class MTTModel(QAbstractTableModel):
             for node in [x[0] for x in nodes]:
                 attr_name = self.supported_format_dict[cmds.nodeType(node)]
                 attr_value = cmds.getAttr('%s.%s' % (node, attr_name))
-                cmds.setAttr(
-                    '%s.%s' % (node, attr_name), attr_value, type="string")
+                set_attr(node, attr_name, attr_value, attr_type='string')
             self.is_reloading_file = False
 
         self.file_watch_add_path(file_path)

@@ -582,15 +582,19 @@ class MTTView(QMainWindow):
         nodes = self.get_all_table_nodes() if all_node else self.get_selected_table_nodes()
         if nodes:
             reloaded_files = []
+            reloaded_files_count = 0
             self.model.is_reloading_file = True
             for node in [data.data() for data in nodes]:
                 node_attr_name = self.supported_format_dict[cmds.nodeType(node)]
                 node_attr_value = cmds.getAttr('%s.%s' % (node, node_attr_name))
                 if node_attr_value not in reloaded_files:
                     reloaded_files.append(node_attr_value)
-                    set_attr(node, node_attr_name, node_attr_value, attr_type="string")
+                    if set_attr(node, node_attr_name, node_attr_value, attr_type="string"):
+                        reloaded_files_count += 1
             self.model.is_reloading_file = False
-            mtt_log('%d node%s reloaded' % (len(nodes), ('s' if len(nodes) > 1 else '')), verbose=True)
+            mtt_log('%d/%d texture%s reloaded' % (
+                reloaded_files_count, len(nodes),
+                ('s' if reloaded_files_count > 1 else '')))
         else:
             mtt_log('Nothing selected... nothing to reload')
 
@@ -623,7 +627,7 @@ class MTTView(QMainWindow):
                         rename_count += 1
             mtt_log(
                 '%d/%d node%s renamed with filename' % (rename_count, len(nodes), ('s' if len(nodes) > 1 else '')),
-                verbose=True
+                verbose=False
             )
         else:
             mtt_log('Nothing selected... nothing to rename')
@@ -648,7 +652,7 @@ class MTTView(QMainWindow):
                     else:
                         filename = os.path.basename(absolute_path)
                         if filename != '.':
-                            mtt_log('File "%s" not found' % filename, verbose=True)
+                            mtt_log('File "%s" not found' % filename, verbose=False)
         else:
             mtt_log('Nothing selected... nothing to show')
 
@@ -850,20 +854,20 @@ class MTTView(QMainWindow):
         # open writable source files from current workspace
         for source in source_files:
             cmds.launchImageEditor(editImageFile=source)
-            mtt_log('Opening "%s"' % source, verbose=True)
+            mtt_log('Opening "%s"' % source, verbose=False)
 
         # open non writable source files if user want it
         for source, is_writable, is_external in user_choice_files:
             if self.__prompt_to_open_file(source, is_writable, is_external):
                 cmds.launchImageEditor(editImageFile=source)
-                mtt_log('Opening "%s"' % source, verbose=True)
+                mtt_log('Opening "%s"' % source, verbose=False)
             else:
-                mtt_log('Opening Aborted for "%s"' % source, verbose=True)
+                mtt_log('Opening Aborted for "%s"' % source, verbose=False)
 
         # log missing source files
         for source in missing_files:
             mtt_log('No PSD found for "%s"' % source,
-                    verbose=True, msg_type='warning')
+                    verbose=False, msg_type='warning')
 
     def on_open_file_folder(self):
         nodes = self.get_selected_table_nodes()
@@ -1016,11 +1020,11 @@ class MTTView(QMainWindow):
                                 os.chmod(destination_path, stat.S_IWRITE)
 
                         if cmds.sysFile(file_fullpath, copy=destination_path):
-                            mtt_log('%s copied.' % os.path.basename(destination_path), verbose=True)
+                            mtt_log('%s copied.' % os.path.basename(destination_path), verbose=False)
                             os.chmod(destination_path, stat.S_IWRITE)
                             set_attr(node_name, node_attr_name, destination_path, attr_type="string")
                         else:
-                            mtt_log('%s copy failed.' % os.path.basename(destination_path), msg_type='warning', verbose=True)
+                            mtt_log('%s copy failed.' % os.path.basename(destination_path), msg_type='warning', verbose=False)
                     else:
                         if file_history[file_fullpath]:
                             set_attr(node_name, node_attr_name, file_history[file_fullpath], attr_type="string")
@@ -1074,9 +1078,9 @@ class MTTView(QMainWindow):
                             if cmds.sysFile(file_fullpath, rename=new_path):
                                 set_attr(node_name, node_attr_name, new_path, attr_type="string")
                             else:
-                                mtt_log('%s rename failed.' % filename, msg_type='warning', verbose=True)
+                                mtt_log('%s rename failed.' % filename, msg_type='warning', verbose=False)
                         else:
-                            mtt_log('%s rename aborted (read-only).' % filename, msg_type='warning', verbose=True)
+                            mtt_log('%s rename aborted (read-only).' % filename, msg_type='warning', verbose=False)
                     else:
                         if file_history[file_fullpath]:
                             set_attr(node_name, node_attr_name, file_history[file_fullpath], attr_type="string")

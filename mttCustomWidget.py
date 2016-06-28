@@ -7,7 +7,7 @@ from PySide.QtCore import Signal, Qt
 # Maya import
 from maya import cmds
 # custom import
-from mttConfig import TOOLBAR_BUTTON_SIZE
+from mttConfig import TOOLBAR_BUTTON_SIZE, TOOLBAR_SEPARATOR_WIDTH
 
 
 class RightPushButton(QPushButton):
@@ -95,7 +95,7 @@ class SeparatorButton(QPushButton):
         self.is_collapsed = False
         self.icon = self.pix[1]
         self.setFlat(True)
-        self.setFixedSize(10, 20)
+        self.setFixedSize(TOOLBAR_SEPARATOR_WIDTH, 20)
 
     def paintEvent(self, event):
         mouse_pos = self.mapFromGlobal(QCursor.pos())
@@ -116,7 +116,7 @@ class SeparatorButton(QPushButton):
 class StatusCollapsibleLayout(QWidget):
     """ Collapsible layout with Maya Status Line's style """
 
-    toggled = Signal(bool)
+    toggled = Signal(int)
 
     def __init__(self, parent=None, section_name=None):
         super(StatusCollapsibleLayout, self).__init__(parent)
@@ -139,6 +139,12 @@ class StatusCollapsibleLayout(QWidget):
 
         self.setLayout(self.group_layout)
 
+    def _delta_length(self):
+        if self.state:
+            return self.max_length() - TOOLBAR_SEPARATOR_WIDTH
+        else:
+            return TOOLBAR_SEPARATOR_WIDTH - self.max_length()
+
     def add_button(self, button):
         """ Create a button and add it to the layout
 
@@ -147,22 +153,23 @@ class StatusCollapsibleLayout(QWidget):
         self.icon_buttons.append(button)
         self.group_layout.addWidget(button)
 
-    def toggle_layout(self):
+    def toggle_layout(self, init=False):
         """ Toggle collapse action for layout """
-        self.state = not self.state
+        if not init:
+            self.state = not self.state
 
         for btn in self.icon_buttons:
             btn.setVisible(self.state)
 
         self.toggle_btn.set_collapse(self.state)
-        self.toggled.emit(self.state)
+        if init:
+            self.toggled.emit(0 if self.state else self._delta_length())
+        else:
+            self.toggled.emit(self._delta_length())
 
     def set_current_state(self, state):
-        if isinstance(state, unicode):
-            state = state == 'true'
-
-        self.state = not state
-        self.toggle_layout()
+        self.state = state == 'true' if isinstance(state, unicode) else state
+        self.toggle_layout(init=True)
 
     def button_count(self):
         return len(self.icon_buttons)
@@ -173,10 +180,10 @@ class StatusCollapsibleLayout(QWidget):
     def current_state(self):
         return self.state
 
-    def length(self):
+    def max_length(self):
         count = self.button_count()
-        # count * button size + spacing
-        return count * TOOLBAR_BUTTON_SIZE + count
+        # separator button width + button count * button size + spacing
+        return TOOLBAR_SEPARATOR_WIDTH + count * TOOLBAR_BUTTON_SIZE + count
 
 
 class StatusScrollArea(QScrollArea):
@@ -185,6 +192,8 @@ class StatusScrollArea(QScrollArea):
 
         self._width = 0
         self._group_count = 0
+
+        self._pan_pos = None
 
         self.__create_ui()
         self.__init_ui()
@@ -207,9 +216,52 @@ class StatusScrollArea(QScrollArea):
         self.setFrameShape(self.NoFrame)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
 
-    def _update_width(self, expand):
-        self._width += self.sender().length() * [-1, 1][expand]
+    def _update_width(self, expand_value):
+        self._width += expand_value
         self.container.setFixedWidth(self._width + self._group_count)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MidButton:
+            QApplication.setOverrideCursor(QCursor(Qt.SizeHorCursor))
+            self._pan_pos = event.globalPos()
+            event.accept()
+        else:
+            event.ignore()
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.MidButton:
+            QApplication.restoreOverrideCursor()
+            self._pan_pos = None
+            event.accept()
+        else:
+            event.ignore()
+
+    def mouseMoveEvent(self, event):
+        if self._pan_pos:
+            h_bar = self.horizontalScrollBar()
+            h_bar_pos = h_bar.sliderPosition()
+            cursor_pos = event.globalPos()
+            cursor_delta = (cursor_pos - self._pan_pos).x()
+
+            h_bar.setValue(h_bar_pos - cursor_delta)
+            self._pan_pos = cursor_pos
+            event.accept()
+        else:
+            event.ignore()
+
+    def wheelEvent(self, event):
+        if event.orientation() == Qt.Vertical:
+            num_degrees = event.delta() / 8
+            h_bar = self.horizontalScrollBar()
+            h_bar_pos = h_bar.sliderPosition()
+
+            h_bar.setValue(h_bar_pos - num_degrees)
+        else:
+            super(StatusScrollArea, self).wheelEvent(event)
+
+    def resizeEvent(self, event):
+        max_scroll = max(0, self.container.width() - event.size().width())
+        self.horizontalScrollBar().setMaximum(max_scroll)
 
     def add_widget(self, widget):
         # add widget to layout
@@ -219,7 +271,7 @@ class StatusScrollArea(QScrollArea):
         widget.toggled.connect(self._update_width)
 
         # expand widget layout
-        self._width += widget.length()
+        self._width += widget.max_length()
         self._group_count += 1
         self.container.setFixedWidth(self._width)
 

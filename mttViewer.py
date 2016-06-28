@@ -319,10 +319,10 @@ class MTTGraphicsView(QGraphicsView):
             qt_image = QImage(self.image_buffer, width_value, height_value, image_format).rgbSwapped()
 
             self.is_loading_fail = False
-            mtt_log('%s loaded' % os.path.basename(texture_path), add_tag='VIEWER')
+            mtt_log('%s loaded' % os.path.basename(texture_path), add_tag='VIEWER', verbose=False)
         except Exception as e:
-            mtt_log('%s\n%s' % (type(e), e), add_tag='VIEWER', msg_type='error')
-            mtt_log('Fail to load %s' % os.path.basename(texture_path), add_tag='VIEWER', msg_type='error')
+            mtt_log('%s\n%s' % (type(e), e), add_tag='VIEWER', msg_type='error', verbose=False)
+            mtt_log('Fail to load %s' % os.path.basename(texture_path), add_tag='VIEWER', msg_type='error', verbose=False)
             self.is_loading_fail = True
             if MTTSettings.value('Viewer/recoverMode'):
                 try:
@@ -341,15 +341,15 @@ class MTTGraphicsView(QGraphicsView):
                             a = om.MScriptUtil.getUcharArrayItem(pixel_ptr, i + 3)
                             qt_image.setPixel(x, y, QColor(r, g, b, a).rgba())
                     end = time.clock()
-                    mtt_log('Image read in %.3fs' % (end - start))
+                    mtt_log('Image read in %.3fs' % (end - start), verbose=False)
                 except Exception as e:
-                    mtt_log(e, add_tag='VIEWER', msg_type='error')
+                    mtt_log(e, add_tag='VIEWER', msg_type='error', verbose=False)
                     show_default = True
             else:
                 show_default = True
         except RuntimeError as e:
-            mtt_log('%s\n%s' % (type(e), e), add_tag='VIEWER', msg_type='error')
-            mtt_log('Fail to load %s' % os.path.basename(texture_path), add_tag='VIEWER', msg_type='error')
+            mtt_log('%s\n%s' % (type(e), e), add_tag='VIEWER', msg_type='error', verbose=False)
+            mtt_log('Fail to load %s' % os.path.basename(texture_path), add_tag='VIEWER', msg_type='error', verbose=False)
             self.is_loading_fail = True
             show_default = True
 
@@ -835,7 +835,7 @@ class MTTViewer(QMainWindow):
             QApplication.restoreOverrideCursor()
         else:
             self.texture_path = None
-            mtt_log('File not found.', add_tag='VIEWER', msg_type='warning')
+            mtt_log('File not found.', add_tag='VIEWER', msg_type='warning', verbose=False)
             self.graphics_view.is_loading_fail = True
             self.graphics_view.reset_image()
 

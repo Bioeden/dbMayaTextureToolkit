@@ -82,7 +82,7 @@ from maya import cmds
 
 
 __author__ = u'David Bole aka Bioeden'
-__version__ = 1.11
+__version__ = 1.12
 
 
 # reload all package modules if new version is detected

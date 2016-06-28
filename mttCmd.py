@@ -8,7 +8,7 @@ from maya import cmds
 from mttConfig import WINDOW_TITLE, MTTSettings, WS_KEY
 
 
-def mtt_log(msg, add_tag=None, msg_type=None, verbose=False):
+def mtt_log(msg, add_tag=None, msg_type=None, verbose=True):
     """ Format output message '[TAG][add_tag] Message content'
 
     :param msg: (string) message content
@@ -35,7 +35,7 @@ def mtt_log(msg, add_tag=None, msg_type=None, verbose=False):
     else:
         print '%s %s\n' % (tag_str, msg),
 
-    if not verbose and MTTSettings.value('showHeadsUp'):
+    if verbose and MTTSettings.value('showHeadsUp'):
         cmds.headsUpMessage(msg)
 
 
@@ -49,10 +49,19 @@ def get_attr(node, attr, default_value=None):
 def set_attr(node, attr, value, attr_type=None):
     attr_name = '{}.{}'.format(node, attr)
     state = cmds.getAttr(attr_name, lock=True)
-    if attr_type:
-        cmds.setAttr(attr_name, value, type=attr_type, lock=state)
-    else:
-        cmds.setAttr(attr_name, value, lock=state)
+
+    try:
+        # set attr fail on referenced node
+        cmds.setAttr(attr_name, lock=False)
+        if attr_type:
+            cmds.setAttr(attr_name, value, type=attr_type, lock=state)
+        else:
+            cmds.setAttr(attr_name, value, lock=state)
+        return True
+
+    except RuntimeError:
+        mtt_log('setAttr command failed on {}'.format(attr_name), verbose=False)
+        return False
 
 
 def get_texture_source_folder(alt_path=None):
@@ -78,7 +87,7 @@ def get_texture_source_folder(alt_path=None):
                 msg = (
                     'You should change "textureSourceFolder" folder '
                     'in mtt.json file')
-                mtt_log(msg, msg_type='warning')
+                mtt_log(msg, msg_type='warning', verbose=False)
 
     return os.path.normpath(texture_source_folder)
 
